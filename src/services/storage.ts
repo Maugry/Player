@@ -234,7 +234,8 @@ class StorageService {
       if (cached) {
         // Use custom media-cache:// protocol (registered in Electron main process)
         // URL format: media-cache://local/filename.mp4
-        const fileName = cached.localPath.split('/').pop() || cached.localPath.split('\\').pop()
+        // Split by both / and \ to handle Windows and Unix paths
+        const fileName = cached.localPath.split(/[/\\]/).pop()
         return `media-cache://local/${fileName}`
       }
     }
