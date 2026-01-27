@@ -11,19 +11,14 @@ files:
   - dist-electron
   - "!**/*.map"
 
-# Windows build
+# Windows build - use 'dir' to skip rcedit (requires wine32)
 win:
   target:
-    - target: portable
+    - target: dir
       arch: x64
-  artifactName: "UMKA-Player-${version}-portable.exe"
   # Skip code signing for demo builds
   sign: false
   signDlls: false
-
-# Portable settings (no installation required)
-portable:
-  splashImage: false
 
 # Include sample settings file in resources
 extraResources:
