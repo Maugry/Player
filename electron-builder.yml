@@ -1,0 +1,37 @@
+appId: com.umka.player
+productName: UMKA Player
+copyright: Copyright © 2026 Museum Systems
+
+directories:
+  buildResources: build
+  output: release
+
+files:
+  - dist
+  - dist-electron
+  - "!**/*.map"
+
+# Windows build
+win:
+  target:
+    - target: portable
+      arch: x64
+  artifactName: "UMKA-Player-${version}-portable.exe"
+  # Skip code signing for demo builds
+  sign: false
+  signDlls: false
+
+# Portable settings (no installation required)
+portable:
+  splashImage: false
+
+# Include sample settings file in resources
+extraResources:
+  - from: "resources/"
+    to: "."
+    filter:
+      - "**/*"
+
+# Build optimization
+asar: true
+compression: normal

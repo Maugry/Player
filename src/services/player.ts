@@ -1,0 +1,652 @@
+/**
+ * Player Service
+ * Manages kiosk playback state and content navigation
+ */
+
+import type {
+  KioskMode,
+  PlaybackState,
+  AppState,
+  ContentPackage,
+  MenuItem,
+  MediaItem,
+  KioskCommand,
+} from '@/types'
+import { mqttService } from './mqtt'
+
+type StateChangeHandler = (state: PlayerState) => void
+type SyncRequestHandler = () => void
+type ModeChangeHandler = (newMode: KioskMode) => void
+type LocaleChangeHandler = (newLocale: string) => void
+
+export interface PlayerState {
+  appState: AppState
+  mode: KioskMode
+  playbackState: PlaybackState
+  volume: number
+  locale: string
+  looping: boolean // Whether current video should loop
+  // Current content being displayed
+  currentContent: MenuItem | MediaItem | null
+  currentIndex: number // For playlist/showcase
+  // Menu navigation
+  menuStack: MenuItem[][] // Stack of menu levels for back navigation
+  currentMenu: MenuItem[] | null
+  // Error info
+  error: string | null
+}
+
+const IDLE_TIMEOUT = 120000 // 2 minutes of inactivity
+
+/**
+ * Filter out guide-only items from menu (visitors shouldn't see them)
+ */
+function filterGuideOnlyItems(items: MenuItem[]): MenuItem[] {
+  return items
+    .filter(item => !item.guideOnly)
+    .map(item => {
+      // Also filter submenu items recursively
+      if (item.submenuItems) {
+        return { ...item, submenuItems: filterGuideOnlyItems(item.submenuItems) }
+      }
+      return item
+    })
+}
+
+/**
+ * Filter out guide-only items from media list (for playlist in loop mode)
+ */
+function filterGuideOnlyMedia(items: MediaItem[]): MediaItem[] {
+  return items.filter(item => !item.guideOnly)
+}
+
+class PlayerService {
+  private state: PlayerState = {
+    appState: 'loading',
+    mode: 'browse',
+    playbackState: 'idle',
+    volume: 80,
+    locale: 'ru',
+    looping: true,
+    currentContent: null,
+    currentIndex: 0,
+    menuStack: [],
+    currentMenu: null,
+    error: null,
+  }
+
+  private contentPackage: ContentPackage | null = null
+  private stateHandlers: Set<StateChangeHandler> = new Set()
+  private syncRequestHandlers: Set<SyncRequestHandler> = new Set()
+  private modeChangeHandlers: Set<ModeChangeHandler> = new Set()
+  private localeChangeHandlers: Set<LocaleChangeHandler> = new Set()
+  private idleTimer: ReturnType<typeof setTimeout> | null = null
+
+  /**
+   * Initialize player with content package
+   */
+  init(contentPackage: ContentPackage, mode: KioskMode): void {
+    this.contentPackage = contentPackage
+    this.state.mode = mode
+    this.state.menuStack = []
+    this.state.currentContent = null
+    this.state.currentIndex = 0
+
+    switch (mode) {
+      case 'browse':
+        // Filter out guide-only items - visitors shouldn't see them
+        this.state.currentMenu = filterGuideOnlyItems(contentPackage.menuItems || [])
+        this.state.appState = 'screensaver'
+        break
+
+      case 'loop':
+      case 'projector':
+      case 'audio':
+        // All three modes play the playlist in a loop
+        // projector: no UI controls (passive display)
+        // audio: background music (same as loop)
+        this.state.appState = 'content'
+        this.state.playbackState = 'playing'
+        // Filter out guide-only items from playlist
+        const filteredPlaylist = filterGuideOnlyMedia(contentPackage.playlist?.items || [])
+        if (filteredPlaylist.length) {
+          this.state.currentContent = filteredPlaylist[0]
+          this.state.currentIndex = 0
+        }
+        break
+
+      case 'showcase':
+        this.state.appState = 'content'
+        if (contentPackage.showcaseItems?.length) {
+          this.state.currentContent = contentPackage.showcaseItems[0] as any
+          this.state.currentIndex = 0
+        }
+        break
+
+      default:
+        this.state.appState = 'screensaver'
+    }
+
+    this.notifyStateChange()
+    this.publishStatus()
+  }
+
+  /**
+   * Reinitialize player with new content (called after sync)
+   */
+  reinit(contentPackage: ContentPackage, mode?: KioskMode): void {
+    console.log('[Player] Reinitializing with new content:', contentPackage.name)
+    this.init(contentPackage, mode ?? this.state.mode)
+  }
+
+  /**
+   * Change mode and reinitialize
+   */
+  setMode(newMode: KioskMode): void {
+    if (newMode === this.state.mode) return
+    console.log('[Player] Changing mode from', this.state.mode, 'to', newMode)
+    if (this.contentPackage) {
+      this.init(this.contentPackage, newMode)
+    }
+  }
+
+  /**
+   * Handle incoming MQTT command
+   */
+  handleCommand(command: KioskCommand): void {
+    console.log('[Player] Handling command:', command.action)
+
+    switch (command.action) {
+      case 'play':
+        if (command.value) {
+          // Play specific content by ID
+          this.playContentById(command.value)
+        } else {
+          // Just resume playback
+          this.play()
+        }
+        break
+
+      case 'pause':
+        this.pause()
+        break
+
+      case 'stop':
+        this.stop()
+        break
+
+      case 'volume':
+        if (typeof command.value === 'number') {
+          this.setVolume(command.value)
+        }
+        break
+
+      case 'next':
+        this.next()
+        break
+
+      case 'prev':
+        this.previous()
+        break
+
+      case 'home':
+        this.goHome()
+        break
+
+      case 'content':
+        if (command.value) {
+          this.playContent(command.value)
+        }
+        break
+
+      case 'mode':
+        if (command.value) {
+          console.log('[Player] Mode change requested:', command.value)
+          this.modeChangeHandlers.forEach(handler => handler(command.value))
+        }
+        break
+
+      case 'sync':
+        console.log('[Player] Sync requested')
+        this.syncRequestHandlers.forEach(handler => handler())
+        break
+
+      case 'restart':
+        console.log('[Player] Restart requested')
+        // Reload the application
+        if (typeof window !== 'undefined') {
+          window.location.reload()
+        }
+        break
+
+      case 'locale':
+        if (command.value) {
+          console.log('[Player] Locale change requested:', command.value)
+          this.state.locale = command.value
+          this.notifyStateChange()
+          this.publishStatus()
+          this.localeChangeHandlers.forEach(handler => handler(command.value))
+        }
+        break
+
+      case 'power_off':
+        console.log('[Player] Shutdown requested')
+        if (window.electronAPI?.shutdown) {
+          window.electronAPI.shutdown()
+        }
+        break
+
+      case 'reboot':
+        console.log('[Player] Reboot requested')
+        if (window.electronAPI?.reboot) {
+          window.electronAPI.reboot()
+        }
+        break
+
+      case 'loop':
+        // Toggle or set looping
+        if (typeof command.value === 'boolean') {
+          this.state.looping = command.value
+        } else {
+          this.state.looping = !this.state.looping
+        }
+        console.log('[Player] Looping:', this.state.looping)
+        this.notifyStateChange()
+        this.publishStatus()
+        break
+    }
+  }
+
+  /**
+   * User touched the screen - wake from screensaver
+   */
+  wake(): void {
+    if (this.state.appState === 'screensaver' && this.state.mode === 'browse') {
+      this.state.appState = 'menu'
+      this.resetIdleTimer()
+      this.notifyStateChange()
+      this.publishStatus()
+    }
+  }
+
+  /**
+   * Play current content or resume
+   */
+  play(): void {
+    if (this.state.playbackState === 'paused') {
+      this.state.playbackState = 'playing'
+    } else if (this.state.appState === 'screensaver') {
+      this.wake()
+    }
+    this.notifyStateChange()
+    this.publishStatus()
+  }
+
+  /**
+   * Pause playback
+   */
+  pause(): void {
+    if (this.state.playbackState === 'playing') {
+      this.state.playbackState = 'paused'
+      this.notifyStateChange()
+      this.publishStatus()
+    }
+  }
+
+  /**
+   * Stop and return to menu/screensaver
+   */
+  stop(): void {
+    this.state.playbackState = 'idle'
+    this.state.currentContent = null
+
+    if (this.state.mode === 'browse') {
+      this.state.appState = 'menu'
+      this.resetIdleTimer()
+    } else {
+      this.state.appState = 'screensaver'
+    }
+
+    this.notifyStateChange()
+    this.publishStatus()
+  }
+
+  /**
+   * Go to home/main menu
+   */
+  goHome(): void {
+    this.state.menuStack = []
+    this.state.currentMenu = filterGuideOnlyItems(this.contentPackage?.menuItems || [])
+    this.state.currentContent = null
+    this.state.playbackState = 'idle'
+    this.state.appState = this.state.mode === 'browse' ? 'menu' : 'screensaver'
+    this.resetIdleTimer()
+    this.notifyStateChange()
+    this.publishStatus()
+  }
+
+  /**
+   * Select a menu item
+   */
+  selectMenuItem(item: MenuItem): void {
+    this.resetIdleTimer()
+
+    switch (item.contentType) {
+      case 'video':
+        if (item.video) {
+          this.state.currentContent = item
+          this.state.appState = 'content'
+          this.state.playbackState = 'playing'
+        }
+        break
+
+      case 'article':
+        this.state.currentContent = item
+        this.state.appState = 'content'
+        this.state.playbackState = 'idle'
+        break
+
+      case 'showcase':
+        this.state.currentContent = item
+        this.state.currentIndex = 0
+        this.state.appState = 'content'
+        break
+
+      case 'submenu':
+        if (item.submenuItems) {
+          this.state.menuStack.push(this.state.currentMenu || [])
+          this.state.currentMenu = filterGuideOnlyItems(item.submenuItems)
+        }
+        break
+    }
+
+    this.notifyStateChange()
+    this.publishStatus()
+  }
+
+  /**
+   * Go back in menu navigation
+   */
+  goBack(): void {
+    this.resetIdleTimer()
+
+    if (this.state.appState === 'content') {
+      // Return to menu from content
+      this.state.currentContent = null
+      this.state.playbackState = 'idle'
+      this.state.appState = 'menu'
+    } else if (this.state.menuStack.length > 0) {
+      // Go up one menu level
+      this.state.currentMenu = this.state.menuStack.pop() || []
+    }
+
+    this.notifyStateChange()
+    this.publishStatus()
+  }
+
+  /**
+   * Next item in playlist/showcase
+   */
+  next(): void {
+    const items = this.getPlaylistItems()
+    if (!items || items.length === 0) return
+
+    this.state.currentIndex = (this.state.currentIndex + 1) % items.length
+
+    // For loop/projector/audio modes, update currentContent to the playlist item
+    // For showcase, keep currentContent (the parent MenuItem) and only change index
+    if (this.state.mode === 'loop' || this.state.mode === 'projector' || this.state.mode === 'audio') {
+      this.state.currentContent = items[this.state.currentIndex] as any
+    }
+
+    this.resetIdleTimer()
+    this.notifyStateChange()
+    this.publishStatus()
+  }
+
+  /**
+   * Previous item in playlist/showcase
+   */
+  previous(): void {
+    const items = this.getPlaylistItems()
+    if (!items || items.length === 0) return
+
+    this.state.currentIndex = this.state.currentIndex > 0
+      ? this.state.currentIndex - 1
+      : items.length - 1
+
+    // For loop/projector/audio modes, update currentContent to the playlist item
+    // For showcase, keep currentContent (the parent MenuItem) and only change index
+    if (this.state.mode === 'loop' || this.state.mode === 'projector' || this.state.mode === 'audio') {
+      this.state.currentContent = items[this.state.currentIndex] as any
+    }
+    this.resetIdleTimer()
+    this.notifyStateChange()
+    this.publishStatus()
+  }
+
+  /**
+   * Play specific content by ID (from 'content' command)
+   */
+  playContent(contentId: string): void {
+    // Find content in menu items
+    const item = this.findMenuItemById(contentId, this.contentPackage?.menuItems || [])
+    if (item) {
+      this.selectMenuItem(item)
+    }
+  }
+
+  /**
+   * Play specific content by media ID (from 'play' command with mediaId)
+   * Searches playlist, guide content, and menu items
+   */
+  playContentById(mediaId: string): void {
+    // Check playlist items first (for loop/audio/projector modes)
+    const playlistItems = this.contentPackage?.playlist?.items || []
+    const playlistIndex = playlistItems.findIndex(item => item.id === mediaId)
+    if (playlistIndex >= 0) {
+      console.log('[Player] Playing playlist item at index:', playlistIndex)
+      this.state.currentIndex = playlistIndex
+      this.state.currentContent = playlistItems[playlistIndex]
+      this.state.appState = 'content'
+      this.state.playbackState = 'playing'
+      this.notifyStateChange()
+      this.publishStatus()
+      return
+    }
+
+    // Check guide content
+    const guideItems = this.contentPackage?.guideContent?.items || []
+    const guideItem = guideItems.find(item => item.id === mediaId)
+    if (guideItem) {
+      console.log('[Player] Playing guide content:', guideItem.title || mediaId)
+      this.state.currentContent = guideItem
+      this.state.appState = 'content'
+      this.state.playbackState = 'playing'
+      this.notifyStateChange()
+      this.publishStatus()
+      return
+    }
+
+    // Check menu items (find by video ID)
+    const menuItem = this.findMenuItemByMediaId(mediaId, this.contentPackage?.menuItems || [])
+    if (menuItem) {
+      console.log('[Player] Playing menu item:', menuItem.title)
+      this.selectMenuItem(menuItem)
+      return
+    }
+
+    console.warn('[Player] Content not found for ID:', mediaId)
+  }
+
+  /**
+   * Find menu item by its media/video ID
+   */
+  private findMenuItemByMediaId(mediaId: string, items: MenuItem[]): MenuItem | null {
+    for (const item of items) {
+      if (item.video?.id === mediaId) return item
+      if (item.submenuItems) {
+        const found = this.findMenuItemByMediaId(mediaId, item.submenuItems)
+        if (found) return found
+      }
+    }
+    return null
+  }
+
+  /**
+   * Set volume
+   */
+  setVolume(volume: number): void {
+    this.state.volume = Math.max(0, Math.min(100, volume))
+    this.notifyStateChange()
+    this.publishStatus()
+  }
+
+  /**
+   * Get current playlist/showcase items (filtered for visitors)
+   */
+  private getPlaylistItems(): any[] | null {
+    if (this.state.mode === 'loop' || this.state.mode === 'projector' || this.state.mode === 'audio') {
+      // Filter out guide-only items from playlist
+      return filterGuideOnlyMedia(this.contentPackage?.playlist?.items || [])
+    }
+    // For showcase content
+    const content = this.state.currentContent as MenuItem | null
+    if (content && content.contentType === 'showcase' && content.showcaseItems) {
+      return content.showcaseItems
+    }
+    return null
+  }
+
+  /**
+   * Find menu item by ID recursively
+   */
+  private findMenuItemById(id: string, items: MenuItem[]): MenuItem | null {
+    for (const item of items) {
+      if (item.id === id) return item
+      if (item.submenuItems) {
+        const found = this.findMenuItemById(id, item.submenuItems)
+        if (found) return found
+      }
+    }
+    return null
+  }
+
+  /**
+   * Reset idle timer
+   */
+  private resetIdleTimer(): void {
+    if (this.idleTimer) {
+      clearTimeout(this.idleTimer)
+    }
+
+    if (this.state.mode === 'browse') {
+      this.idleTimer = setTimeout(() => {
+        this.goToScreensaver()
+      }, IDLE_TIMEOUT)
+    }
+  }
+
+  /**
+   * Go to screensaver after idle timeout
+   */
+  private goToScreensaver(): void {
+    this.state.appState = 'screensaver'
+    this.state.currentContent = null
+    this.state.playbackState = 'idle'
+    this.state.menuStack = []
+    this.state.currentMenu = filterGuideOnlyItems(this.contentPackage?.menuItems || [])
+    this.notifyStateChange()
+    this.publishStatus()
+  }
+
+  /**
+   * Set error state
+   */
+  setError(error: string): void {
+    this.state.error = error
+    this.state.appState = 'error'
+    this.notifyStateChange()
+    this.publishStatus()
+  }
+
+  /**
+   * Clear error
+   */
+  clearError(): void {
+    this.state.error = null
+    this.state.appState = 'screensaver'
+    this.notifyStateChange()
+    this.publishStatus()
+  }
+
+  /**
+   * Subscribe to state changes
+   */
+  onStateChange(handler: StateChangeHandler): () => void {
+    this.stateHandlers.add(handler)
+    // Immediately call with current state
+    handler(this.state)
+    return () => this.stateHandlers.delete(handler)
+  }
+
+  /**
+   * Subscribe to sync requests (triggered by CMS content changes)
+   */
+  onSyncRequest(handler: SyncRequestHandler): () => void {
+    this.syncRequestHandlers.add(handler)
+    return () => this.syncRequestHandlers.delete(handler)
+  }
+
+  /**
+   * Subscribe to mode changes
+   */
+  onModeChange(handler: ModeChangeHandler): () => void {
+    this.modeChangeHandlers.add(handler)
+    return () => this.modeChangeHandlers.delete(handler)
+  }
+
+  /**
+   * Subscribe to locale changes
+   */
+  onLocaleChange(handler: LocaleChangeHandler): () => void {
+    this.localeChangeHandlers.add(handler)
+    return () => this.localeChangeHandlers.delete(handler)
+  }
+
+  /**
+   * Get current state
+   */
+  getState(): PlayerState {
+    return { ...this.state }
+  }
+
+  /**
+   * Notify all state handlers
+   */
+  private notifyStateChange(): void {
+    const stateCopy = { ...this.state }
+    this.stateHandlers.forEach(handler => handler(stateCopy))
+  }
+
+  /**
+   * Publish status to MQTT
+   */
+  private publishStatus(): void {
+    const content = this.state.currentContent
+    mqttService.publishStatus({
+      state: this.state.playbackState,
+      mode: this.state.mode,
+      volume: this.state.volume,
+      locale: this.state.locale,
+      currentContent: content ? {
+        type: 'video' in (content as any) ? 'video' : 'article',
+        id: (content as any).id,
+        title: (content as any).title,
+      } : undefined,
+    })
+  }
+}
+
+// Singleton instance
+export const playerService = new PlayerService()
