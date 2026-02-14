@@ -11,10 +11,10 @@ files:
   - dist-electron
   - "!**/*.map"
 
-# Windows build - use 'dir' to skip rcedit (requires wine32)
+# Windows build - portable .exe (single file, no install step)
 win:
   target:
-    - target: dir
+    - target: portable
       arch: x64
   # Skip code signing for demo builds
   sign: false

@@ -28,6 +28,7 @@ interface CachedMedia {
   mimeType: string
   size: number
   downloadedAt: string
+  checksum?: string  // SHA-256 from CMS
 }
 
 class StorageService {
@@ -143,12 +144,21 @@ class StorageService {
       if (this.isElectron) {
         const exists = await window.electronAPI!.fileExists(cached.localPath)
         if (exists) {
-          console.log('[Storage] Media already cached:', media.id)
-          return cached.localPath
+          // Check if content changed via checksum
+          if (media.checksum && cached.checksum && media.checksum !== cached.checksum) {
+            console.log(`[Storage] Media ${media.id} changed (checksum mismatch), re-downloading`)
+          } else {
+            console.log('[Storage] Media already cached:', media.id)
+            return cached.localPath
+          }
         }
       } else {
-        // In browser, just return the cached URL
-        return cached.localPath
+        // In browser, check checksum if available
+        if (media.checksum && cached.checksum && media.checksum !== cached.checksum) {
+          console.log(`[Storage] Media ${media.id} changed (checksum mismatch), re-downloading`)
+        } else {
+          return cached.localPath
+        }
       }
     }
 
@@ -171,6 +181,7 @@ class StorageService {
         mimeType: media.mimeType,
         size: 0, // Will be updated by main process
         downloadedAt: new Date().toISOString(),
+        checksum: media.checksum,
       })
 
       return localPath
@@ -187,6 +198,7 @@ class StorageService {
         mimeType: media.mimeType,
         size: blob.size,
         downloadedAt: new Date().toISOString(),
+        checksum: media.checksum,
       })
 
       return localUrl
@@ -317,9 +329,9 @@ class StorageService {
       }
     }
 
-    // Screensaver
-    if (pkg.screensaver?.media?.url) {
-      media.push(pkg.screensaver.media)
+    // Screensaver (v2.5 - media is an array)
+    if (pkg.screensaver?.media) {
+      media.push(...pkg.screensaver.media.filter(m => m.url))
     }
 
     // Showcase items

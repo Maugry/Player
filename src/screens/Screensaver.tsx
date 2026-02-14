@@ -1,64 +1,152 @@
 /**
- * Screensaver Screen
- * Displayed when kiosk is idle, touch anywhere to wake
+ * Screensaver Screen (v2.5)
+ * Displayed when kiosk is idle, supports media carousel, title/subtitle, configurable start button
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 
 interface ScreensaverProps {
   onWake: () => void
-  videoUrl?: string
+  screensaver?: {
+    enabled: boolean
+    media?: Array<{ id: string; url: string; mimeType: string }>
+    title?: string
+    subtitle?: string
+    showStartButton?: boolean
+    startButtonText?: string
+    idleTimeoutSeconds?: number
+    showTransitionAnimation?: boolean
+  }
   logoUrl?: string
 }
 
-export function Screensaver({ onWake, videoUrl, logoUrl }: ScreensaverProps) {
-  const [showHint, setShowHint] = useState(false)
+const CAROUSEL_INTERVAL_MS = 8000
 
+export function Screensaver({ onWake, screensaver, logoUrl }: ScreensaverProps) {
+  const [currentMediaIndex, setCurrentMediaIndex] = useState(0)
+  const [dismissing, setDismissing] = useState(false)
+  const dismissTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // If screensaver is explicitly disabled, wake immediately
   useEffect(() => {
-    // Show touch hint after 3 seconds
-    const timer = setTimeout(() => setShowHint(true), 3000)
-    return () => clearTimeout(timer)
+    if (screensaver && !screensaver.enabled) {
+      onWake()
+    }
+  }, [screensaver, onWake])
+
+  // Media carousel: cycle through items every 8 seconds
+  const mediaItems = screensaver?.media?.filter(m => m.url) ?? []
+  useEffect(() => {
+    if (mediaItems.length <= 1) return
+
+    const interval = setInterval(() => {
+      setCurrentMediaIndex(prev => (prev + 1) % mediaItems.length)
+    }, CAROUSEL_INTERVAL_MS)
+
+    return () => clearInterval(interval)
+  }, [mediaItems.length])
+
+  // Handle dismiss with optional fade-out transition
+  const handleWake = useCallback(() => {
+    if (dismissing) return
+
+    const shouldAnimate = screensaver?.showTransitionAnimation !== false
+    if (shouldAnimate) {
+      setDismissing(true)
+      dismissTimeoutRef.current = setTimeout(() => {
+        onWake()
+      }, 500)
+    } else {
+      onWake()
+    }
+  }, [dismissing, screensaver?.showTransitionAnimation, onWake])
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (dismissTimeoutRef.current) {
+        clearTimeout(dismissTimeoutRef.current)
+      }
+    }
   }, [])
+
+  // If disabled, render nothing (useEffect above calls onWake)
+  if (screensaver && !screensaver.enabled) {
+    return null
+  }
+
+  const showStartButton = screensaver?.showStartButton !== false
+  const startButtonText = screensaver?.startButtonText || 'Нажмите, чтобы начать'
+  const currentMedia = mediaItems.length > 0 ? mediaItems[currentMediaIndex] : null
+
+  const isVideo = currentMedia?.mimeType?.startsWith('video/')
+  const isImage = currentMedia?.mimeType?.startsWith('image/')
 
   return (
     <div
-      className="fixed inset-0 bg-black cursor-pointer"
-      onClick={onWake}
-      onTouchStart={onWake}
+      className={`fixed inset-0 bg-black cursor-pointer transition-opacity duration-500 ${
+        dismissing ? 'opacity-0' : 'opacity-100'
+      }`}
+      onClick={handleWake}
+      onTouchStart={handleWake}
     >
-      {/* Video background if provided */}
-      {videoUrl && (
+      {/* Media background */}
+      {currentMedia && isVideo && (
         <video
+          key={currentMedia.id}
           className="absolute inset-0 w-full h-full object-cover"
-          src={videoUrl}
+          src={currentMedia.url}
           autoPlay
           loop
           muted
           playsInline
         />
       )}
+      {currentMedia && isImage && (
+        <img
+          key={currentMedia.id}
+          className="absolute inset-0 w-full h-full object-cover"
+          src={currentMedia.url}
+          alt=""
+        />
+      )}
 
-      {/* Logo overlay */}
+      {/* Content overlay */}
       <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/30">
-        {logoUrl ? (
+        {/* Logo */}
+        {logoUrl && (
           <img
             src={logoUrl}
             alt="Logo"
-            className="w-64 h-64 object-contain animate-pulse"
+            className="w-64 h-64 object-contain mb-8"
           />
-        ) : (
+        )}
+
+        {/* Title and subtitle */}
+        {screensaver?.title ? (
+          <div className="text-center px-8">
+            <h1 className="text-6xl font-bold text-white mb-4">
+              {screensaver.title}
+            </h1>
+            {screensaver.subtitle && (
+              <p className="text-2xl text-white/70">
+                {screensaver.subtitle}
+              </p>
+            )}
+          </div>
+        ) : !logoUrl ? (
           <div className="text-center">
             <h1 className="text-6xl font-bold text-white mb-4 animate-pulse">
               UMKA
             </h1>
             <p className="text-2xl text-white/70">Музейный киоск</p>
           </div>
-        )}
+        ) : null}
 
-        {/* Touch hint */}
-        {showHint && (
+        {/* Start button */}
+        {showStartButton && (
           <div className="absolute bottom-16 text-white/60 text-lg animate-bounce">
-            Коснитесь экрана для начала
+            {startButtonText}
           </div>
         )}
       </div>

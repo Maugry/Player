@@ -124,11 +124,23 @@ class ApiService {
       }
     }
 
-    // Transform screensaver
+    // Transform screensaver (v2.5)
     if (data.screensaver) {
       pkg.screensaver = {
-        type: data.screensaver.type || 'video',
-        media: data.screensaver.media ? this.transformMedia(data.screensaver.media) : undefined,
+        enabled: data.screensaver.enabled ?? true,
+        media: Array.isArray(data.screensaver.media)
+          ? data.screensaver.media.map((m: any) =>
+              typeof m === 'string' ? { id: m, url: '', mimeType: '' } : this.transformMedia(m)
+            )
+          : data.screensaver.media
+            ? [this.transformMedia(data.screensaver.media)]
+            : undefined,
+        title: data.screensaver.title,
+        subtitle: data.screensaver.subtitle,
+        showStartButton: data.screensaver.showStartButton ?? true,
+        startButtonText: data.screensaver.startButtonText,
+        idleTimeoutSeconds: data.screensaver.idleTimeoutSeconds,
+        showTransitionAnimation: data.screensaver.showTransitionAnimation ?? true,
       }
     }
 
@@ -176,6 +188,7 @@ class ApiService {
         ? `${this.baseUrl}${data.sizes.thumbnail.url}`
         : undefined,
       guideOnly: data.guideOnly || false,
+      checksum: data.checksum || undefined,
     }
   }
 

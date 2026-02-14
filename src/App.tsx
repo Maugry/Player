@@ -49,7 +49,7 @@ const FALLBACK_CONTENT: ContentPackage = {
     },
   ],
   screensaver: {
-    type: 'animation',
+    enabled: true,
   },
 }
 
@@ -60,6 +60,7 @@ function App() {
   const [initError, setInitError] = useState<string | null>(null)
   const [resolvedVideoUrl, setResolvedVideoUrl] = useState<string | null>(null)
   const [isSyncing, setIsSyncing] = useState(false)
+  const [contentPackage, setContentPackage] = useState<ContentPackage | null>(null)
 
   /**
    * Load content and mode from CMS
@@ -106,6 +107,7 @@ function App() {
 
         // Reinitialize player with new content and mode from CMS
         playerService.reinit(content, mode)
+        setContentPackage(content)
         console.log('[App] Content synced successfully')
       } else {
         console.warn('[App] Sync failed - no content received')
@@ -196,6 +198,7 @@ function App() {
 
         // Initialize player with content and mode from CMS
         playerService.init(content, mode)
+        setContentPackage(content)
 
         // Subscribe to MQTT commands
         mqttService.onCommand((cmd: KioskCommand) => {
@@ -340,7 +343,7 @@ function App() {
 
   // Screensaver
   if (playerState.appState === 'screensaver') {
-    return <Screensaver onWake={handleWake} />
+    return <Screensaver onWake={handleWake} screensaver={contentPackage?.screensaver} />
   }
 
   // Menu (browse mode)
@@ -463,7 +466,7 @@ function App() {
   }
 
   // Fallback to screensaver
-  return <Screensaver onWake={handleWake} />
+  return <Screensaver onWake={handleWake} screensaver={contentPackage?.screensaver} />
 }
 
 export default App

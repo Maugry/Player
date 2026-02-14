@@ -44,6 +44,7 @@ export interface MediaItem {
   thumbnail?: string
   // Guide-only flag - if true, item should not be shown to visitors
   guideOnly?: boolean
+  checksum?: string  // SHA-256, from CMS Media collection
 }
 
 export interface Article {
@@ -93,10 +94,16 @@ export interface ContentPackage {
   guideContent?: {
     items: MediaItem[]
   }
-  // Screensaver config
+  // Screensaver config (v2.5)
   screensaver?: {
-    type: 'video' | 'image' | 'animation'
-    media?: MediaItem
+    enabled: boolean
+    media?: MediaItem[]
+    title?: string
+    subtitle?: string
+    showStartButton?: boolean
+    startButtonText?: string
+    idleTimeoutSeconds?: number
+    showTransitionAnimation?: boolean
   }
 }
 
