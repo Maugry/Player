@@ -1,6 +1,6 @@
 MIT License
 
-Copyright (c) [2025] [Umka kiosk]
+Copyright (c) 2026 Umka Museum System
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -19,3 +19,25 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+---
+
+## Umka Kiosk Standard
+
+This software is the reference implementation of the Umka Kiosk Standard v1.2,
+which defines:
+
+- MQTT protocol for museum kiosk remote control
+- CMS-agnostic REST API for content synchronization
+- Operating modes (Loop, Browse, Custom)
+- Content package format and structure
+- Local-first content architecture
+- Guide tablet integration
+
+All implementations of the Umka Kiosk Standard will naturally contain similar
+code because they implement the same protocol specification. This is by design
+and is the intended purpose of having an open standard.
+
+Client-specific customizations (branding, museum-specific features, custom
+content types) built on top of this reference implementation remain proprietary
+to the respective clients.
