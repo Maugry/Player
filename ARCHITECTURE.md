@@ -2,7 +2,7 @@
 
 This document describes the internal architecture of the Umka Player reference implementation.
 
-> **Note:** This is the simplified MIT reference implementation. It includes power and app lifecycle commands within the player itself. Production deployments should use a separate Sentinel service for control plane operations. See the [Control Plane](#control-plane-separation) section and `STANDARD.md` Section 9 for details.
+> **Note:** This is the simplified MIT reference implementation. It includes power and app lifecycle commands within the player itself. Production deployments should use a separate control plane service for these operations. See the [Control Plane](#control-plane-separation) section and `STANDARD.md` Section 9 for details.
 
 ---
 
@@ -235,7 +235,7 @@ publishStatus()               // Send status to MQTT
 
 **Topic Subscriptions:**
 ```typescript
-umka/kiosks/{slug}/commands/power      // Reference impl only — moves to Sentinel in production
+umka/kiosks/{slug}/commands/power      // Reference impl only — moves to Service in production
 umka/kiosks/{slug}/commands/app
 umka/kiosks/{slug}/commands/playback
 umka/kiosks/{slug}/commands/volume
@@ -322,29 +322,29 @@ This is acceptable for development, testing, and small deployments.
 
 ### Production Architecture
 
-Production deployments separate the **control plane** (Sentinel) from the **content plane** (Player):
+Production deployments separate the **control plane** (Service) from the **content plane** (Player):
 
 ```
 ┌─────────────────────────────────────────────────┐
 │                    MQTT Broker                    │
 │                                                  │
-│  system/*       ← Sentinel (power, lifecycle)    │
+│  system/*       ← Service (power, lifecycle)     │
 │  commands/*     ← Player (playback, content)     │
 └──────────┬───────────────────┬───────────────────┘
            │                   │
      ┌─────▼──────┐     ┌─────▼──────┐
-     │  Sentinel   │     │   Player   │
-     │  (Service)  │     │ (Electron) │
+     │   Service   │     │   Player   │
+     │  (control)  │     │ (Electron) │
      └─────────────┘     └────────────┘
 ```
 
-**Why separate?** If the player hangs or crashes, the kiosk remains remotely manageable. Sentinel can reboot the PC, kill and restart the player, and report system health — all independently.
+**Why separate?** If the player hangs or crashes, the kiosk remains remotely manageable. The service can reboot the PC, kill and restart the player, and report system health — all independently.
 
 **What changes in the player for production:**
 - Remove power command handlers (`system-shutdown`, `system-reboot` IPC handlers)
 - Remove `restart` command handler from player service
 - Remove `commands/power` MQTT subscription
-- Add `updating.lock` file write before auto-updates (so Sentinel pauses its watchdog)
+- Add `updating.lock` file write before auto-updates (so the service pauses its watchdog)
 
 **What stays the same:**
 - All playback, navigation, content, volume, locale commands
@@ -546,15 +546,15 @@ Create test content packages in `public/mock-data/` for development.
 
 ## Browser vs Electron Differences
 
-| Feature | Browser | Electron (Reference) | Electron + Sentinel (Production) |
+| Feature | Browser | Electron (Reference) | Electron + Service (Production) |
 |---------|---------|----------|----------|
 | Media caching | Blob URLs (temp) | File system (persistent) | File system (persistent) |
-| Power control | Not available | OS commands via IPC | Handled by Sentinel |
-| App lifecycle | Not available | Self-restart | Managed by Sentinel |
-| Watchdog | Not available | Not available | Sentinel monitors player |
-| System health | Not available | Not available | Sentinel reports CPU/RAM/disk |
+| Power control | Not available | OS commands via IPC | Handled by Service |
+| App lifecycle | Not available | Self-restart | Managed by Service |
+| Watchdog | Not available | Not available | Service monitors player |
+| System health | Not available | Not available | Service reports CPU/RAM/disk |
 | Kiosk mode | Fullscreen API | OS-level kiosk mode | OS-level kiosk mode |
-| Auto-start | Not available | Startup configuration | Sentinel starts player |
+| Auto-start | Not available | Startup configuration | Service starts player |
 | File access | Limited | Full filesystem | Full filesystem |
 
 **Development:**

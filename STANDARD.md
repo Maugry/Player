@@ -1,4 +1,4 @@
-# Umka Kiosk Standard v1.2
+# Umka Kiosk Standard v1.26.2
 
 **Status:** Draft
 **Date:** February 2026
@@ -20,7 +20,7 @@ The Umka Kiosk Standard defines a universal protocol for museum multimedia kiosk
 
 1. **Local-first** — Kiosks always operate from locally stored content. Server connectivity is used for synchronization and remote control, not for primary operation
 2. **CMS-agnostic** — The standard defines the API contract between kiosk and server. The server-side CMS implementation is not prescribed
-3. **Hardware-agnostic** — Works on touchscreens, LED panels, projectors, and audio-only systems
+3. **Hardware-agnostic** — The player runs on a Windows PC and supports various output devices: monitors, TVs, touchscreens, LED panels, projectors, and audio systems
 4. **Standards-based** — Any implementation following this spec is Umka-compatible. Implementations will share protocol code by design
 
 ### 1.2 Terminology
@@ -77,6 +77,7 @@ Screensaver → (touch "Start") → Playlist → (end/idle) → Screensaver
 
 - Screensaver displayed in idle state
 - "Start" button on screensaver to begin playback
+- "Back" button during playback to return to screensaver
 - Return to screensaver after playback completes
 - Video controls: play/pause, seek, volume
 - Controls appear on touch, auto-hide after inactivity timeout
@@ -119,6 +120,7 @@ Black screen → (trigger/command) → Playlist → (end) → Black screen
 - Completely passive (no on-screen UI controls)
 - Triggered by MQTT command, guide tablet, or IoT device
 - Can play once and return to black, or loop
+- Can display a static image instead of black screen in idle state
 - No touch interaction
 
 ---
@@ -128,7 +130,7 @@ Black screen → (trigger/command) → Playlist → (end) → Black screen
 Interactive mode with a menu/catalog for visitor self-service content selection.
 
 **Common behavior:**
-- Hierarchical menu navigation
+- Hierarchical menu navigation with unlimited nesting depth
 - Multiple content types (video, articles, image galleries)
 - Touch-optimized interface
 - Idle timeout returns to screensaver
@@ -144,9 +146,9 @@ Interactive mode with a menu/catalog for visitor self-service content selection.
 #### Detailed Object View
 
 - Object title and description
-- Media gallery (carousel): photos, videos
-- Scroll-based navigation through gallery items
-- Caption and description for each gallery item (when available)
+- Media list: photos, videos
+- Navigation through media items (scroll, swipe, or carousel — implementation-specific)
+- Caption and description for each media item (when available)
 - Full-screen media viewing
 - Video playback with controls
 
@@ -204,10 +206,6 @@ The kiosk in any mode (Loop, Browse) supports remote control from a guide tablet
 - Toggle looped playback
 - Volume control
 - Exit guide mode (return kiosk to default content)
-
-**Kiosk lock:**
-- When a guide takes control, the kiosk is locked from other guides
-- On guide exit, the kiosk unlocks
 
 ### 3.3 Guide-Only Content (Папка экскурсовода)
 
@@ -317,20 +315,21 @@ Where `{kioskSlug}` is the unique text identifier for each kiosk.
 
 **Categories:**
 - `commands/*` — Server/Guide → Player (content and playback control)
-- `system/*` — Server → Sentinel (power and app lifecycle control)
+- `system/*` — Server → Service (power and app lifecycle control)
 - `status` — Player → Server (state reporting)
 - `heartbeat` — Player → Server (app health monitoring)
-- `system/heartbeat` — Sentinel → Server (system health monitoring)
+- `system/heartbeat` — Service → Server (system health monitoring)
 
-### 5.2 System Topics (Server → Sentinel)
+### 5.2 System Topics (Server → Service)
 
-In production deployments, power and app lifecycle commands are handled by a separate control plane service (Sentinel) that runs independently of the player. This ensures the kiosk remains remotely manageable even if the player application hangs or crashes.
+In production deployments, power and app lifecycle commands are handled by a separate control plane service that runs independently of the player. This ensures the kiosk remains remotely manageable even if the player application hangs or crashes.
 
 #### Power Management
 **Topic:** `umka/kiosks/{kioskSlug}/system/power`
 
 | Payload | Description |
 |---------|-------------|
+| `"on"` | Power on via Wake-on-LAN (magic packet) |
 | `"shutdown"` | Shutdown OS |
 | `"reboot"` | Reboot OS |
 
@@ -343,7 +342,7 @@ In production deployments, power and app lifecycle commands are handled by a sep
 | `"stop"` | Stop the player application |
 | `"restart"` | Stop and relaunch the player application |
 
-#### Sentinel Heartbeat
+#### Service Heartbeat
 **Topic:** `umka/kiosks/{kioskSlug}/system/heartbeat`
 **QoS:** 0
 **Retain:** true
@@ -373,7 +372,7 @@ In production deployments, power and app lifecycle commands are handled by a sep
 
 **Player status values:** `running`, `stopped`, `updating`, `unresponsive`, `restarting`
 
-> **Note:** The simplified MIT reference implementation does not include Sentinel. Power and app commands are handled within the player itself. Production deployments SHOULD use a separate Sentinel service for reliability.
+> **Note:** The simplified MIT reference implementation does not include the control plane service. Power and app commands are handled within the player itself. Production deployments SHOULD use a separate service for reliability.
 
 ---
 
@@ -728,14 +727,14 @@ Implementations MUST cache content locally. The specific storage mechanism is no
 
 ---
 
-## 9. Power Management & Control Plane
+## 9. Power Management & Control Plane (Service)
 
 ### 9.1 Control Plane Separation
 
-In production deployments, system-level control (power, app lifecycle, watchdog) SHOULD be handled by a separate service (Sentinel) running independently of the player. This ensures remote manageability even when the player is unresponsive.
+In production deployments, system-level control (power, app lifecycle, watchdog) SHOULD be handled by a separate control plane service running independently of the player. This ensures remote manageability even when the player is unresponsive.
 
-**Sentinel responsibilities:**
-- PC power control (shutdown, reboot)
+**Service responsibilities:**
+- PC power control (power on via WoL, shutdown, reboot)
 - Player lifecycle management (start, stop, restart)
 - Watchdog (automatic player recovery on crash or freeze)
 - System health reporting (CPU, RAM, disk, network)
@@ -746,12 +745,12 @@ In production deployments, system-level control (power, app lifecycle, watchdog)
 - Content sync with CMS
 - Player-level status and heartbeat
 
-Sentinel observes the player through three channels:
+The service observes the player through three channels:
 1. **OS process monitoring** — is the player process alive?
 2. **MQTT heartbeat subscription** — is the player responsive?
 3. **Filesystem lock file** — is the player mid-update?
 
-> **Note:** The simplified MIT reference implementation does not include Sentinel. It handles power and lifecycle commands within the player itself. This is acceptable for development and small deployments but not recommended for production.
+> **Note:** The simplified MIT reference implementation does not include the control plane service. It handles power and lifecycle commands within the player itself. This is acceptable for development and small deployments but not recommended for production.
 
 ### 9.2 Wake-on-LAN (Power ON)
 
@@ -761,14 +760,14 @@ Sentinel observes the player through three channels:
 
 ### 9.3 Shutdown / Reboot
 
-On receiving power command via `system/power` topic, Sentinel MUST:
+On receiving power command via `system/power` topic, the service MUST:
 1. Publish updated status (player.status = "stopped")
 2. Stop the player process gracefully
 3. Execute OS shutdown/reboot command
 
 ### 9.4 Watchdog (Automatic Recovery)
 
-Sentinel implements three-tier recovery when the player is detected as crashed or frozen:
+The service implements three-tier recovery when the player is detected as crashed or frozen:
 
 1. **Tier 1 — Graceful restart:** Launch the player, wait 30 seconds
 2. **Tier 2 — Force restart:** Kill the player process, relaunch, wait 30 seconds
@@ -778,14 +777,14 @@ Circuit breaker resets after 5 minutes of healthy player operation.
 
 ### 9.5 Player Update Coordination
 
-The player uses its own update mechanism (e.g., electron-builder auto-update). Sentinel does not participate in updates — it only pauses the watchdog during the update window.
+The player uses its own update mechanism (e.g., electron-builder auto-update). The service does not participate in updates — it only pauses the watchdog during the update window.
 
 1. Player writes `updating.lock` file before starting the update
-2. Sentinel detects lock file, pauses watchdog (grace period: 3 minutes)
+2. The service detects lock file, pauses watchdog (grace period: 3 minutes)
 3. Player completes update, restarts, deletes lock file
-4. Sentinel resumes normal monitoring
+4. The service resumes normal monitoring
 
-If the lock file persists beyond the grace period, Sentinel assumes the update failed and proceeds with Tier 1 recovery.
+If the lock file persists beyond the grace period, the service assumes the update failed and proceeds with Tier 1 recovery.
 
 ---
 
@@ -819,9 +818,9 @@ An Umka-compatible player MUST:
 - [ ] Auto-reconnect MQTT on connection loss
 
 **Production deployments SHOULD:**
-- [ ] Use a separate Sentinel service for power and lifecycle control
+- [ ] Use a separate control plane service for power and lifecycle control
 - [ ] Implement watchdog with tiered recovery
-- [ ] Report system health (CPU, RAM, disk) via sentinel heartbeat
+- [ ] Report system health (CPU, RAM, disk) via service heartbeat
 - [ ] Support update coordination via lock file
 
 **Recommended:**
@@ -844,7 +843,7 @@ The following are explicitly left to each implementation:
 - **Game logic** — Custom Mode applications define their own behavior
 - **Hardware-specific features** — Keystone correction, multi-monitor, etc.
 - **Update mechanism** — How the kiosk software itself is updated
-- **Sentinel implementation** — The standard defines the MQTT contract for system control; the sentinel service implementation (language, packaging, service manager) is not prescribed
+- **Service implementation** — The standard defines the MQTT contract for system control; the service implementation (language, packaging, service manager) is not prescribed
 
 ---
 
@@ -852,9 +851,9 @@ The following are explicitly left to each implementation:
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.0 | Jan 2026 | Initial standard: Loop, Browse modes, MQTT protocol |
-| 1.1 | Feb 2026 | Added Custom mode, guide-only content, IoT triggers, local-first architecture, CMS-agnostic API |
-| 1.2 | Feb 2026 | Control plane separation (Sentinel): system/* MQTT topics, watchdog, system health reporting, update coordination |
+| 1.26.0 | Jan 2026 | Initial standard: Loop, Browse modes, MQTT protocol |
+| 1.26.1 | Feb 2026 | Custom mode, guide-only content, IoT triggers, local-first architecture, CMS-agnostic API |
+| 1.26.2 | Feb 2026 | Control plane separation, hardware-agnostic clarifications, multi-level Browse navigation, power ON command |
 
 ---
 

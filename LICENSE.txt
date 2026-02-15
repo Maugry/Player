@@ -1,6 +1,6 @@
 MIT License
 
-Copyright (c) 2026 Umka Museum System
+Copyright (c) 2026 Multimedia Solutions Lab Ltd.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -22,17 +22,19 @@ SOFTWARE.
 
 ---
 
-## Umka Kiosk Standard
+## About Umka Player
 
-This software is the reference implementation of the Umka Kiosk Standard v1.2,
-which defines:
+Umka Player is a multimedia software — the reference implementation of the Umka Kiosk Standard, an open protocol for museum kiosk systems. The Umka Kiosk Standard and the Smart Museum "Umka" system are developed and owned by Multimedia Solutions Lab Ltd.
+
+The Umka Kiosk Standard v1.26.2 defines:
 
 - MQTT protocol for museum kiosk remote control
 - CMS-agnostic REST API for content synchronization
-- Operating modes (Loop, Browse, Custom)
+- Operating modes
 - Content package format and structure
 - Local-first content architecture
 - Guide tablet integration
+- IoT device integration
 
 All implementations of the Umka Kiosk Standard will naturally contain similar
 code because they implement the same protocol specification. This is by design
