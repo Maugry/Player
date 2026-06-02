@@ -9,9 +9,19 @@
  */
 
 import mqtt, { MqttClient, IClientOptions } from 'mqtt'
+import { APP_VERSION } from '@/version'
 import type { KioskCommand, KioskStatus, KioskHeartbeat, KioskSettings } from '@/types'
 
 type CommandHandler = (command: KioskCommand) => void
+
+export function buildHeartbeat(kioskId: string, startTime: number): KioskHeartbeat {
+  return {
+    kioskId,
+    timestamp: new Date().toISOString(),
+    version: APP_VERSION,
+    uptime: Math.floor((Date.now() - startTime) / 1000),
+  }
+}
 
 /**
  * Pure parser: maps a command topic leaf + raw payload to a KioskCommand,
@@ -240,16 +250,8 @@ class MqttService {
    */
   private publishHeartbeat(): void {
     if (!this.client?.connected || !this.settings) return
-
     const topic = `${this.getBaseTopic()}/heartbeat`
-    const heartbeat: KioskHeartbeat = {
-      kioskId: this.settings.kioskId,
-      timestamp: new Date().toISOString(),
-      version: '0.1.0',
-      uptime: Math.floor((Date.now() - this.startTime) / 1000),
-    }
-
-    this.client.publish(topic, JSON.stringify(heartbeat), { qos: 0 })
+    this.client.publish(topic, JSON.stringify(buildHeartbeat(this.settings.kioskId, this.startTime)), { qos: 0 })
   }
 
   /**
