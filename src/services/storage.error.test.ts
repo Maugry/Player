@@ -13,7 +13,7 @@ describe('storage permanent failure', () => {
   })
 
   afterEach(() => {
-    ;(globalThis as any).indexedDB = originalIndexedDB
+    (globalThis as any).indexedDB = originalIndexedDB
   })
 
   it('emits INDEXEDDB_OPEN_FAILED_PERMANENT via player.setError', async () => {

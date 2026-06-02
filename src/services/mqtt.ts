@@ -52,31 +52,38 @@ export function parseCommand(leaf: string, raw: string): KioskCommand | null {
       return null
     }
     case 'playback': {
-      let d: any
-      try { d = JSON.parse(raw) } catch { return null }
-      if (!d || typeof d !== 'object') return null
+      let parsed: unknown
+      try { parsed = JSON.parse(raw) } catch { return null }
+      if (!parsed || typeof parsed !== 'object') return null
+      const d = parsed as Record<string, unknown>
       switch (d.action) {
         case 'play': return { action: 'play', value: d.mediaId }
         case 'content': return { action: 'content', value: d.contentId }
         case 'seek': return { action: 'seek', value: d.value }
         case 'pause': case 'stop': case 'next': case 'prev': case 'home': case 'screensaver':
           return { action: d.action }
-        case 'trigger_play':
-          if (!d.mediaId || !d.mediaUrl) return null
+        case 'trigger_play': {
+          const mediaId = d.mediaId
+          const mediaUrl = d.mediaUrl
+          if (typeof mediaId !== 'string' || typeof mediaUrl !== 'string') return null
           return {
             action: 'trigger_play',
             trigger: {
-              mediaId: d.mediaId, mediaUrl: d.mediaUrl,
-              mediaMimeType: d.mediaMimeType, mediaTitle: d.mediaTitle,
+              mediaId, mediaUrl,
+              mediaMimeType: typeof d.mediaMimeType === 'string' ? d.mediaMimeType : '',
+              mediaTitle: typeof d.mediaTitle === 'string' ? d.mediaTitle : undefined,
             },
           }
+        }
         default: return null
       }
     }
     case 'app': {
-      let d: any
-      try { d = JSON.parse(raw) } catch { return null } // bare-string => Supervisor's, ignore
-      if (!d || typeof d !== 'object' || typeof d.action !== 'string') return null
+      let parsed: unknown
+      try { parsed = JSON.parse(raw) } catch { return null } // bare-string => Supervisor's, ignore
+      if (!parsed || typeof parsed !== 'object') return null
+      const d = parsed as Record<string, unknown>
+      if (typeof d.action !== 'string') return null
       switch (d.action) {
         case 'sync': return { action: 'sync' }
         case 'quit': return { action: 'quit' }

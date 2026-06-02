@@ -7,7 +7,7 @@
  * - File system (via Electron) for media files
  */
 
-import type { ContentPackage, MediaItem } from '@/types'
+import type { ContentPackage, MediaItem, KioskSettings } from '@/types'
 
 const DB_NAME = 'umka-kiosk'
 const DB_VERSION = 1
@@ -299,7 +299,7 @@ class StorageService {
     await this.saveSyncState({
       lastSyncAt: new Date().toISOString(),
       packageId: pkg.id,
-      packageVersion: (pkg as any).version || '1',
+      packageVersion: pkg.version || '1',
     })
 
     console.log('[Storage] Content package cached successfully')
@@ -453,7 +453,7 @@ export const storageService = new StorageService()
 declare global {
   interface Window {
     electronAPI?: {
-      loadSettings: () => Promise<any>
+      loadSettings: () => Promise<Partial<KioskSettings> | null>
       getAppVersion: () => Promise<string>
       getMediaPath: () => Promise<string>
       downloadMedia: (

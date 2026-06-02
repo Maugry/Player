@@ -3,6 +3,16 @@
  * Fetches content from Payload CMS
  */
 
+/*
+ * This module is the boundary that transforms untyped Payload CMS JSON
+ * (arbitrary `depth`-expanded relationships, optional fields, string-or-object
+ * media refs) into our domain types. The CMS responses are genuinely untyped
+ * wire data; typing them as `unknown` would force dozens of per-field guards in
+ * the transform helpers without improving safety. We intentionally allow `any`
+ * for these raw-response shapes only.
+ */
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
 import type { KioskSettings, ContentPackage, MediaItem, Article } from '@/types'
 
 class ApiService {

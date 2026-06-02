@@ -10,6 +10,7 @@ import type {
   ContentPackage,
   MenuItem,
   MediaItem,
+  ShowcaseItem,
   KioskCommand,
   KioskError,
   KioskErrorCode,
@@ -182,7 +183,7 @@ class PlayerService {
 
     switch (command.action) {
       case 'play':
-        if (command.value) {
+        if (typeof command.value === 'string') {
           // Play specific content by ID
           this.playContentById(command.value)
         } else {
@@ -222,7 +223,7 @@ class PlayerService {
         break
 
       case 'content':
-        if (command.value) {
+        if (typeof command.value === 'string') {
           this.playContent(command.value)
         }
         break
@@ -230,7 +231,8 @@ class PlayerService {
       case 'mode':
         if (command.value) {
           console.log('[Player] Mode change requested:', command.value)
-          this.modeChangeHandlers.forEach(handler => handler(command.value))
+          const mode = command.value as KioskMode
+          this.modeChangeHandlers.forEach(handler => handler(mode))
         }
         break
 
@@ -261,12 +263,13 @@ class PlayerService {
         break
 
       case 'locale':
-        if (command.value) {
+        if (typeof command.value === 'string') {
           console.log('[Player] Locale change requested:', command.value)
-          this.state.locale = command.value
+          const locale = command.value
+          this.state.locale = locale
           this.notifyStateChange()
           this.publishStatus()
-          this.localeChangeHandlers.forEach(handler => handler(command.value))
+          this.localeChangeHandlers.forEach(handler => handler(locale))
         }
         break
 
@@ -465,7 +468,8 @@ class PlayerService {
     // For loop mode, update currentContent to the playlist item.
     // For showcase, keep currentContent (the parent MenuItem) and only change index.
     if (this.state.mode === 'loop') {
-      this.state.currentContent = items[this.state.currentIndex] as any
+      // In loop mode getPlaylistItems() yields MediaItem entries.
+      this.state.currentContent = items[this.state.currentIndex] as MediaItem
     }
 
     this.resetIdleTimer()
@@ -487,7 +491,8 @@ class PlayerService {
     // For loop mode, update currentContent to the playlist item.
     // For showcase, keep currentContent (the parent MenuItem) and only change index.
     if (this.state.mode === 'loop') {
-      this.state.currentContent = items[this.state.currentIndex] as any
+      // In loop mode getPlaylistItems() yields MediaItem entries.
+      this.state.currentContent = items[this.state.currentIndex] as MediaItem
     }
     this.resetIdleTimer()
     this.notifyStateChange()
@@ -574,7 +579,7 @@ class PlayerService {
   /**
    * Get current playlist/showcase items (filtered for visitors)
    */
-  private getPlaylistItems(): any[] | null {
+  private getPlaylistItems(): (MediaItem | ShowcaseItem)[] | null {
     if (this.state.mode === 'loop') {
       // Filter out guide-only items from playlist
       return filterGuideOnlyMedia(this.contentPackage?.playlist?.items || [])
@@ -759,7 +764,11 @@ class PlayerService {
    * Publish status to MQTT
    */
   private publishStatus(): void {
-    const content = this.state.currentContent as any
+    // currentContent is a MenuItem | MediaItem union; read the structurally
+    // shared/optional fields defensively for the status payload.
+    const content = this.state.currentContent as
+      | (Pick<MenuItem, 'id' | 'title'> & Partial<MenuItem> & Partial<MediaItem>)
+      | null
     const triggerEnded = this.state.triggerEndedPending
     this.state.triggerEndedPending = false // one-shot
 

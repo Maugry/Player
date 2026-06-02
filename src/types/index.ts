@@ -58,7 +58,8 @@ export interface MediaItem {
 export interface Article {
   id: string
   title: string
-  content: any
+  // Untyped rich-text/CMS wire data; consumers narrow at the use site.
+  content: unknown
   coverImage?: MediaItem
 }
 
@@ -119,7 +120,8 @@ export interface KioskCommand {
     | 'power_off' | 'reboot'
     | 'sync' | 'restart' | 'quit' | 'locale'
     | 'screensaver' | 'seek' | 'trigger_play'
-  value?: any
+  // Untyped command payload from the wire; consumers narrow at the use site.
+  value?: unknown
   trigger?: TriggerEnvelope
 }
 

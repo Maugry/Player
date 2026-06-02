@@ -3,6 +3,7 @@
  * Displays rich text content from CMS
  */
 
+import type { ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
 import { ArrowLeft, Home } from 'lucide-react'
 import type { MenuItem } from '@/types'
@@ -13,23 +14,42 @@ interface ArticleViewerProps {
   onHome: () => void
 }
 
+// Minimal structural typing for Payload's Lexical rich-text wire format.
+// The CMS payload is otherwise untyped; we only read the fields rendered below.
+interface LexicalTextNode {
+  type?: string
+  text?: string
+  format?: number
+}
+interface LexicalNode {
+  type?: string
+  tag?: number | string
+  listType?: string
+  text?: string
+  children?: LexicalNode[]
+}
+interface LexicalContent {
+  root?: { children?: LexicalNode[] }
+}
+
 export function ArticleViewer({ item, onBack, onHome }: ArticleViewerProps) {
   // For now, just display basic text content
   // In production, this would render Payload's Lexical rich text
-  const renderContent = (content: any) => {
+  const renderContent = (content: unknown) => {
     if (!content) return null
 
     // Handle Lexical rich text format
-    if (content.root?.children) {
-      return content.root.children.map((node: any, index: number) => {
+    if (typeof content === 'object' && (content as LexicalContent).root?.children) {
+      return (content as LexicalContent).root!.children!.map((node: LexicalNode, index: number) => {
         if (node.type === 'paragraph') {
           return (
             <p key={index} className="mb-4 text-lg leading-relaxed">
-              {node.children?.map((child: any, i: number) => {
+              {node.children?.map((child: LexicalTextNode, i: number) => {
                 if (child.type === 'text') {
-                  let text = child.text
-                  if (child.format & 1) text = <strong key={i}>{text}</strong>
-                  if (child.format & 2) text = <em key={i}>{text}</em>
+                  let text: ReactNode = child.text
+                  const format = child.format ?? 0
+                  if (format & 1) text = <strong key={i}>{text}</strong>
+                  if (format & 2) text = <em key={i}>{text}</em>
                   return text
                 }
                 return child.text || ''
@@ -42,7 +62,7 @@ export function ArticleViewer({ item, onBack, onHome }: ArticleViewerProps) {
           const Tag = `h${node.tag || 2}` as keyof JSX.IntrinsicElements
           return (
             <Tag key={index} className="text-2xl font-bold mb-4 mt-6">
-              {node.children?.map((c: any) => c.text).join('')}
+              {node.children?.map((c: LexicalNode) => c.text).join('')}
             </Tag>
           )
         }
@@ -51,9 +71,9 @@ export function ArticleViewer({ item, onBack, onHome }: ArticleViewerProps) {
           const ListTag = node.listType === 'number' ? 'ol' : 'ul'
           return (
             <ListTag key={index} className="list-inside mb-4 ml-4">
-              {node.children?.map((li: any, i: number) => (
+              {node.children?.map((li: LexicalNode, i: number) => (
                 <li key={i} className="mb-2">
-                  {li.children?.map((c: any) => c.text).join('')}
+                  {li.children?.map((c: LexicalNode) => c.text).join('')}
                 </li>
               ))}
             </ListTag>
