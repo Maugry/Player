@@ -32,6 +32,8 @@ export interface PlayerState {
   // Menu navigation
   menuStack: MenuItem[][] // Stack of menu levels for back navigation
   currentMenu: MenuItem[] | null
+  // Whether the showcase grid is open (used by navigation in browse mode)
+  showcaseOpen: boolean
   // Error info
   error: string | null
 }
@@ -72,6 +74,7 @@ class PlayerService {
     currentIndex: 0,
     menuStack: [],
     currentMenu: null,
+    showcaseOpen: false,
     error: null,
   }
 
@@ -91,40 +94,39 @@ class PlayerService {
     this.state.menuStack = []
     this.state.currentContent = null
     this.state.currentIndex = 0
+    this.state.showcaseOpen = false
 
     switch (mode) {
-      case 'browse':
-        // Filter out guide-only items - visitors shouldn't see them
+      case 'browse': {
         this.state.currentMenu = filterGuideOnlyItems(contentPackage.menuItems || [])
-        this.state.appState = 'screensaver'
+        // Showcase profile: a Browse package whose only content is top-level
+        // showcaseItems opens the grid directly instead of a menu.
+        const hasMenu = (contentPackage.menuItems || []).length > 0
+        const hasShowcase = (contentPackage.showcaseItems || []).length > 0
+        if (!hasMenu && hasShowcase) {
+          this.state.appState = 'content'
+          this.state.showcaseOpen = true
+        } else {
+          this.state.appState = 'screensaver'
+        }
         break
+      }
 
-      case 'loop':
-      case 'projector':
-      case 'audio':
-        // All three modes play the playlist in a loop
-        // projector: no UI controls (passive display)
-        // audio: background music (same as loop)
+      case 'loop': {
         this.state.appState = 'content'
         this.state.playbackState = 'playing'
-        // Filter out guide-only items from playlist
-        const filteredPlaylist = filterGuideOnlyMedia(contentPackage.playlist?.items || [])
-        if (filteredPlaylist.length) {
-          this.state.currentContent = filteredPlaylist[0]
+        const filtered = filterGuideOnlyMedia(contentPackage.playlist?.items || [])
+        if (filtered.length) {
+          this.state.currentContent = filtered[0]
           this.state.currentIndex = 0
         }
         break
+      }
 
-      case 'showcase':
-        this.state.appState = 'content'
-        if (contentPackage.showcaseItems?.length) {
-          this.state.currentContent = contentPackage.showcaseItems[0] as any
-          this.state.currentIndex = 0
-        }
-        break
-
+      case 'custom':
       default:
         this.state.appState = 'screensaver'
+        break
     }
 
     this.notifyStateChange()
@@ -393,9 +395,9 @@ class PlayerService {
 
     this.state.currentIndex = (this.state.currentIndex + 1) % items.length
 
-    // For loop/projector/audio modes, update currentContent to the playlist item
-    // For showcase, keep currentContent (the parent MenuItem) and only change index
-    if (this.state.mode === 'loop' || this.state.mode === 'projector' || this.state.mode === 'audio') {
+    // For loop mode, update currentContent to the playlist item.
+    // For showcase, keep currentContent (the parent MenuItem) and only change index.
+    if (this.state.mode === 'loop') {
       this.state.currentContent = items[this.state.currentIndex] as any
     }
 
@@ -415,9 +417,9 @@ class PlayerService {
       ? this.state.currentIndex - 1
       : items.length - 1
 
-    // For loop/projector/audio modes, update currentContent to the playlist item
-    // For showcase, keep currentContent (the parent MenuItem) and only change index
-    if (this.state.mode === 'loop' || this.state.mode === 'projector' || this.state.mode === 'audio') {
+    // For loop mode, update currentContent to the playlist item.
+    // For showcase, keep currentContent (the parent MenuItem) and only change index.
+    if (this.state.mode === 'loop') {
       this.state.currentContent = items[this.state.currentIndex] as any
     }
     this.resetIdleTimer()
@@ -506,7 +508,7 @@ class PlayerService {
    * Get current playlist/showcase items (filtered for visitors)
    */
   private getPlaylistItems(): any[] | null {
-    if (this.state.mode === 'loop' || this.state.mode === 'projector' || this.state.mode === 'audio') {
+    if (this.state.mode === 'loop') {
       // Filter out guide-only items from playlist
       return filterGuideOnlyMedia(this.contentPackage?.playlist?.items || [])
     }
