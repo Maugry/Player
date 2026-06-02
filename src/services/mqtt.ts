@@ -116,6 +116,16 @@ class MqttService {
       reconnectPeriod: 5000,
       connectTimeout: 3000,
       clean: true,
+      // Supervisor-emulation LWT: on ungraceful disconnect the broker publishes
+      // an `offline` status to the retained system/heartbeat topic (STANDARD
+      // §Supervisor topics). A real Sentinel would own this.
+      will: {
+        topic: `umka/kiosks/${settings.kioskSlug}/system/heartbeat`,
+        payload: JSON.stringify({
+          kioskId: settings.kioskId, status: 'offline', connectedAt: new Date().toISOString(),
+        }),
+        qos: 1, retain: true,
+      },
     }
 
     return new Promise((resolve, reject) => {
@@ -252,6 +262,24 @@ class MqttService {
     if (!this.client?.connected || !this.settings) return
     const topic = `${this.getBaseTopic()}/heartbeat`
     this.client.publish(topic, JSON.stringify(buildHeartbeat(this.settings.kioskId, this.startTime)), { qos: 0 })
+  }
+
+  /**
+   * Publish a system heartbeat (Supervisor emulation) to the retained
+   * system/heartbeat topic. Reflects current liveness while alive.
+   */
+  publishSystemHeartbeat(payload: object): void {
+    if (!this.client?.connected || !this.settings) return
+    this.client.publish(`${this.getBaseTopic()}/system/heartbeat`, JSON.stringify(payload), { qos: 0, retain: true })
+  }
+
+  /**
+   * Publish a graceful-offline status (Supervisor emulation) to the retained
+   * system/heartbeat topic on clean shutdown.
+   */
+  publishGracefulOffline(payload: object): void {
+    if (!this.client?.connected || !this.settings) return
+    this.client.publish(`${this.getBaseTopic()}/system/heartbeat`, JSON.stringify(payload), { qos: 1, retain: true })
   }
 
   /**

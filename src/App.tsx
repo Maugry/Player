@@ -15,6 +15,7 @@ import {
 } from '@/screens'
 import { loadSettings } from '@/services/config'
 import { mqttService } from '@/services/mqtt'
+import { supervisorService } from '@/services/supervisor'
 import { apiService } from '@/services/api'
 import { playerService, type PlayerState } from '@/services/player'
 import { storageService } from '@/services/storage'
@@ -163,6 +164,11 @@ function App() {
           console.warn('[App] MQTT connection failed, continuing without:', mqttResult.reason)
         }
 
+        // Supervisor emulation: owns system/heartbeat + graceful-offline (and
+        // the LWT set in mqtt connect options). In production a separate
+        // Sentinel owns these; this all-in-one Player emulates it.
+        supervisorService.start(loadedSettings)
+
         // Mode from CMS takes priority, fallback to local settings
         let mode: KioskMode = loadedSettings.mode
 
@@ -216,8 +222,14 @@ function App() {
 
     init()
 
+    // Publish graceful-offline on tab/window teardown (browser path).
+    const handleBeforeUnload = () => supervisorService.shutdown()
+    window.addEventListener('beforeunload', handleBeforeUnload)
+
     // Cleanup
     return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload)
+      supervisorService.shutdown()
       mqttService.disconnect()
     }
   }, [loadContentFromCMS])
