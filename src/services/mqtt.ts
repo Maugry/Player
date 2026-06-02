@@ -13,6 +13,73 @@ import type { KioskCommand, KioskStatus, KioskHeartbeat, KioskSettings } from '@
 
 type CommandHandler = (command: KioskCommand) => void
 
+/**
+ * Pure parser: maps a command topic leaf + raw payload to a KioskCommand,
+ * or null if the payload does not match the leaf's expected shape (STANDARD
+ * §Command topics). Callers MUST ignore null.
+ */
+export function parseCommand(leaf: string, raw: string): KioskCommand | null {
+  switch (leaf) {
+    case 'volume': {
+      const n = Number(raw.trim())
+      if (!Number.isFinite(n)) return null
+      return { action: 'volume', value: Math.max(0, Math.min(100, Math.round(n))) }
+    }
+    case 'locale': {
+      let v = raw.trim()
+      try { const j = JSON.parse(raw); if (typeof j === 'string') v = j } catch { /* unquoted */ }
+      return v ? { action: 'locale', value: v } : null
+    }
+    case 'loop': {
+      const t = raw.trim()
+      if (t !== 'true' && t !== 'false') return null
+      return { action: 'loop', value: t === 'true' }
+    }
+    case 'power': {
+      const p = raw.trim().replace(/^"|"$/g, '')
+      if (p === 'off' || p === 'shutdown') return { action: 'power_off' }
+      if (p === 'reboot') return { action: 'reboot' }
+      return null
+    }
+    case 'playback': {
+      let d: any
+      try { d = JSON.parse(raw) } catch { return null }
+      if (!d || typeof d !== 'object') return null
+      switch (d.action) {
+        case 'play': return { action: 'play', value: d.mediaId }
+        case 'content': return { action: 'content', value: d.contentId }
+        case 'seek': return { action: 'seek', value: d.value }
+        case 'pause': case 'stop': case 'next': case 'prev': case 'home': case 'screensaver':
+          return { action: d.action }
+        case 'trigger_play':
+          if (!d.mediaId || !d.mediaUrl) return null
+          return {
+            action: 'trigger_play',
+            trigger: {
+              mediaId: d.mediaId, mediaUrl: d.mediaUrl,
+              mediaMimeType: d.mediaMimeType, mediaTitle: d.mediaTitle,
+            },
+          }
+        default: return null
+      }
+    }
+    case 'app': {
+      let d: any
+      try { d = JSON.parse(raw) } catch { return null } // bare-string => Supervisor's, ignore
+      if (!d || typeof d !== 'object' || typeof d.action !== 'string') return null
+      switch (d.action) {
+        case 'sync': return { action: 'sync' }
+        case 'quit': return { action: 'quit' }
+        case 'restart': return { action: 'restart' }
+        case 'mode': return { action: 'mode', value: d.value }
+        default: return null
+      }
+    }
+    default:
+      return null
+  }
+}
+
 class MqttService {
   private client: MqttClient | null = null
   private settings: KioskSettings | null = null
@@ -114,89 +181,19 @@ class MqttService {
    * Handle incoming MQTT messages
    */
   private handleMessage(topic: string, payload: Buffer): void {
-    try {
-      const parts = topic.split('/')
-      // Topic format: umka/kiosks/{slug}/commands/{type}
-      if (parts.length < 5 || parts[3] !== 'commands') return
-
-      const commandType = parts[4]
-      const data = JSON.parse(payload.toString())
-
-      console.log(`[MQTT] Received command [${commandType}]:`, data)
-
-      // Convert to unified command format
-      let command: KioskCommand
-
-      switch (commandType) {
-        case 'playback':
-          // Playback commands: { action: "play" | "pause" | "stop" | "next" | "prev" | "home" | "content", mediaId?: string, contentId?: string }
-          command = {
-            action: data.action,
-            value: data.mediaId || data.contentId,
-          }
-          break
-
-        case 'volume':
-          // Volume: number 0-100
-          command = {
-            action: 'volume',
-            value: typeof data === 'number' ? data : parseInt(data, 10),
-          }
-          break
-
-        case 'app':
-          // App commands: { action: "sync" | "restart" | "mode", value?: string }
-          if (data.action === 'mode') {
-            command = { action: 'mode', value: data.value }
-          } else if (data.action === 'sync') {
-            command = { action: 'sync' as any }
-          } else if (data.action === 'restart') {
-            command = { action: 'restart' as any }
-          } else {
-            return
-          }
-          break
-
-        case 'power':
-          // Power: "off" | "reboot"
-          const powerAction = typeof data === 'string' ? data : data.action
-          if (powerAction === 'off') {
-            command = { action: 'power_off' }
-          } else if (powerAction === 'reboot') {
-            command = { action: 'reboot' }
-          } else {
-            return
-          }
-          break
-
-        case 'locale':
-          command = { action: 'locale' as any, value: data }
-          break
-
-        case 'loop':
-          // Loop toggle: boolean or toggle
-          command = {
-            action: 'loop',
-            value: typeof data === 'boolean' ? data : data.value,
-          }
-          break
-
-        default:
-          console.warn(`[MQTT] Unknown command type: ${commandType}`)
-          return
-      }
-
-      // Notify all handlers
-      this.commandHandlers.forEach(handler => {
-        try {
-          handler(command)
-        } catch (err) {
-          console.error('[MQTT] Command handler error:', err)
-        }
-      })
-    } catch (err) {
-      console.error('[MQTT] Failed to parse message:', err)
+    const parts = topic.split('/')
+    // umka/kiosks/{slug}/commands/{leaf}
+    if (parts.length < 5 || parts[3] !== 'commands') return
+    const leaf = parts[4]
+    const raw = payload.toString()
+    const command = parseCommand(leaf, raw)
+    if (!command) {
+      console.warn(`[MQTT] Ignored payload on ${leaf}:`, raw)
+      return
     }
+    this.commandHandlers.forEach(handler => {
+      try { handler(command) } catch (err) { console.error('[MQTT] Command handler error:', err) }
+    })
   }
 
   /**
