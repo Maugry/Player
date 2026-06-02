@@ -510,7 +510,7 @@ class PlayerService {
    * Searches playlist, guide content, and menu items
    */
   playContentById(mediaId: string): void {
-    // Check playlist items first (for loop/audio/projector modes)
+    // Check playlist items first (for loop mode)
     const playlistItems = this.contentPackage?.playlist?.items || []
     const playlistIndex = playlistItems.findIndex(item => item.id === mediaId)
     if (playlistIndex >= 0) {

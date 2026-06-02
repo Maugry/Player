@@ -247,9 +247,15 @@ function App() {
         return
       }
 
-      // Loop/Projector/Audio mode: currentContent is a MediaItem directly
-      if (playerState.mode === 'loop' || playerState.mode === 'projector' || playerState.mode === 'audio') {
-        const media = playerState.currentContent as MediaItem
+      // Raw MediaItem content: loop-mode playlist items, or triggered playback
+      // (trigger_play sets a bare MediaItem with no contentType, in any mode).
+      const rawMedia = playerState.currentContent as MediaItem & { contentType?: unknown }
+      const isRawMediaItem =
+        playerState.mode === 'loop' ||
+        playerState.triggeredPlayActive ||
+        (rawMedia.contentType === undefined && typeof rawMedia.url === 'string' && !!rawMedia.mimeType)
+      if (isRawMediaItem) {
+        const media = rawMedia
         if (media.mimeType?.startsWith('video/') || media.mimeType?.startsWith('audio/')) {
           try {
             const url = await storageService.getMediaUrl(media)
@@ -278,7 +284,7 @@ function App() {
     }
 
     resolveMediaUrl()
-  }, [playerState?.currentContent, playerState?.mode])
+  }, [playerState?.currentContent, playerState?.mode, playerState?.triggeredPlayActive])
 
   // Handlers
   const handleWake = useCallback(() => {
@@ -318,6 +324,12 @@ function App() {
     window.location.reload()
   }, [])
 
+  // Screensaver config: `enabled` is optional on the package type but the
+  // Screensaver component expects a concrete boolean. Treat undefined as false.
+  const screensaverConfig = contentPackage?.screensaver
+    ? { ...contentPackage.screensaver, enabled: !!contentPackage.screensaver.enabled }
+    : undefined
+
   // Loading state
   if (isInitializing) {
     return <LoadingScreen message="Инициализация киоска..." />
@@ -340,7 +352,7 @@ function App() {
 
   // Screensaver
   if (playerState.appState === 'screensaver') {
-    return <Screensaver onWake={handleWake} screensaver={contentPackage?.screensaver} />
+    return <Screensaver onWake={handleWake} screensaver={screensaverConfig} />
   }
 
   // Menu (browse mode)
@@ -358,56 +370,46 @@ function App() {
 
   // Content display
   if (playerState.appState === 'content' && playerState.currentContent) {
-    // Projector mode: completely passive, no UI controls
-    if (playerState.mode === 'projector') {
-      const media = playerState.currentContent as MediaItem
-      const isVideo = media.mimeType?.startsWith('video/')
-      const isAudio = media.mimeType?.startsWith('audio/')
+    // Raw MediaItem content renders the same media player regardless of mode:
+    //  - Loop mode (incl. former projector/audio profiles): playlist items.
+    //  - Triggered playback (trigger_play): a bare MediaItem with no
+    //    contentType, set in browse/custom/loop alike. Without this branch a
+    //    trigger would fall through to the MenuItem switch below (which keys
+    //    off contentType) and render nothing.
+    {
+      const rawMedia = playerState.currentContent as MediaItem & { contentType?: unknown }
+      const isTriggered = playerState.triggeredPlayActive
+      const isRawMediaItem =
+        playerState.mode === 'loop' ||
+        isTriggered ||
+        (rawMedia.contentType === undefined && typeof rawMedia.url === 'string' && !!rawMedia.mimeType)
 
-      if (isVideo || isAudio) {
-        return (
-          <div className="fixed inset-0 bg-black">
-            <video
-              className="w-full h-full object-contain"
-              src={resolvedVideoUrl || media.url}
+      if (isRawMediaItem) {
+        const isVideo = rawMedia.mimeType?.startsWith('video/')
+        const isAudio = rawMedia.mimeType?.startsWith('audio/')
+
+        if (isVideo || isAudio) {
+          return (
+            <VideoPlayer
+              media={rawMedia}
+              resolvedUrl={resolvedVideoUrl || undefined}
               autoPlay
-              loop={playerState.looping}
-              muted={false}
-              playsInline
+              // A trigger is a one-shot; only loop playlists repeat.
+              loop={isTriggered ? false : playerState.looping}
+              volume={playerState.volume}
+              isPlaying={playerState.playbackState === 'playing'}
+              onPlay={handlePlay}
+              onPause={handlePause}
               onEnded={() => playerService.onMediaEnded()}
-              style={{ pointerEvents: 'none' }}
+              onBack={handleBack}
+              onVolumeChange={handleVolumeChange}
+              showBackButton={false}
+              showNextPrev={!isTriggered}
+              onNext={() => playerService.next()}
+              onPrev={() => playerService.previous()}
             />
-          </div>
-        )
-      }
-    }
-
-    // Loop/Audio mode: currentContent is a MediaItem directly from playlist
-    if (playerState.mode === 'loop' || playerState.mode === 'audio') {
-      const media = playerState.currentContent as MediaItem
-      const isVideo = media.mimeType?.startsWith('video/')
-      const isAudio = media.mimeType?.startsWith('audio/')
-
-      if (isVideo || isAudio) {
-        return (
-          <VideoPlayer
-            media={media}
-            resolvedUrl={resolvedVideoUrl || undefined}
-            autoPlay
-            loop={playerState.looping}
-            volume={playerState.volume}
-            isPlaying={playerState.playbackState === 'playing'}
-            onPlay={handlePlay}
-            onPause={handlePause}
-            onEnded={() => playerService.onMediaEnded()}
-            onBack={handleBack}
-            onVolumeChange={handleVolumeChange}
-            showBackButton={false}
-            showNextPrev={true}
-            onNext={() => playerService.next()}
-            onPrev={() => playerService.previous()}
-          />
-        )
+          )
+        }
       }
     }
 
@@ -463,7 +465,7 @@ function App() {
   }
 
   // Fallback to screensaver
-  return <Screensaver onWake={handleWake} screensaver={contentPackage?.screensaver} />
+  return <Screensaver onWake={handleWake} screensaver={screensaverConfig} />
 }
 
 export default App

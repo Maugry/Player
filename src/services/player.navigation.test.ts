@@ -56,6 +56,25 @@ describe('navigation tracking', () => {
     expect(n.showcaseOpen).toBe(false)
   })
 
+  it('goBack from a leaf returns to the section, then to root, in lockstep', () => {
+    playerService.selectMenuItem(pkg.menuItems![0])
+    playerService.selectMenuItem(pkg.menuItems![0].submenuItems![0])
+
+    // First goBack: leave the leaf content, back to the section
+    playerService.goBack()
+    let s = playerService.getState()
+    expect(s.navigation.nodeId).toBe('sec1')
+    expect(s.navigation.path).toEqual(['sec1'])
+    expect(s.sectionPath).toEqual(['sec1'])
+
+    // Second goBack: back to root
+    playerService.goBack()
+    s = playerService.getState()
+    expect(s.navigation.nodeId).toBeNull()
+    expect(s.navigation.path).toEqual([])
+    expect(s.sectionPath).toEqual([])
+  })
+
   it('screensaverActive reflects screensaver state', () => {
     expect(playerService.getState().screensaverActive).toBe(false) // woke in beforeEach
     playerService.handleCommand({ action: 'screensaver' })

@@ -62,6 +62,12 @@ describe('parseCommand', () => {
     expect(cmd('app', 'stop')).toBeNull()
     expect(cmd('app', 'restart')).toBeNull()
   })
+  it('playback: malformed JSON ignored', () => {
+    expect(cmd('playback', '{not valid json')).toBeNull()
+  })
+  it('playback: trigger_play missing mediaUrl ignored', () => {
+    expect(cmd('playback', JSON.stringify({ action: 'trigger_play', mediaId: 'm1', mediaMimeType: 'video/mp4' }))).toBeNull()
+  })
   it('unknown leaf ignored', () => {
     expect(cmd('bogus', 'x')).toBeNull()
   })

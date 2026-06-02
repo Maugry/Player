@@ -33,6 +33,24 @@ describe('status payload', () => {
     expect(lastStatus().navigation).toBeUndefined()
   })
 
+  it('includes navigation in Browse after entering a submenu', () => {
+    const browsePkg: ContentPackage = {
+      id: 'b', name: 'b', mode: 'browse',
+      menuItems: [
+        { id: 'sec1', title: 'Section', contentType: 'submenu', submenuItems: [
+          { id: 'obj1', title: 'Object', contentType: 'article', article: { id: 'a', title: 'A', content: {} } },
+        ] },
+      ],
+    }
+    playerService.init(browsePkg, 'browse')
+    playerService.wake()
+    playerService.selectMenuItem(browsePkg.menuItems![0])
+    const nav = lastStatus().navigation
+    expect(nav).toBeDefined()
+    expect(nav.nodeId).toBe('sec1')
+    expect(nav.path).toEqual(['sec1'])
+  })
+
   it('emits triggerEnded exactly once after a triggered play completes', () => {
     playerService.init(loopPkg, 'loop')
     playerService.handleCommand({
