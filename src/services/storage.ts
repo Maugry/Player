@@ -61,8 +61,18 @@ class StorageService {
       const request = indexedDB.open(DB_NAME, DB_VERSION)
 
       request.onerror = () => {
-        console.error('[Storage] Failed to open database:', request.error)
-        reject(request.error)
+        const err = request.error
+        console.error('[Storage] Failed to open database:', err)
+        // No retry logic exists: a single open() failure is permanent.
+        // Surface the conformant error code via the player service. Lazy
+        // dynamic import avoids any module-level dependency on player.ts.
+        void import('@/services/player').then(({ playerService }) => {
+          playerService.setError(
+            'INDEXEDDB_OPEN_FAILED_PERMANENT',
+            `IndexedDB open failed permanently: ${String(err)}`
+          )
+        })
+        reject(err)
       }
 
       request.onsuccess = () => {
