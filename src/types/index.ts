@@ -1,17 +1,35 @@
 /**
- * Kiosk Types
+ * Kiosk Types — Umka Kiosk Standard v1.26.5.1
  */
 
-// Kiosk operating modes
-export type KioskMode = 'browse' | 'loop' | 'projector' | 'audio' | 'showcase' | 'game'
+// Wire operating modes. Configurations (Continuous/Interactive/Triggered/
+// Audio/Projector/Catalog/Showcase) are realised via `profile` + content
+// package, NOT as mode values.
+export type KioskMode = 'loop' | 'browse' | 'custom'
 
-// Kiosk playback states
+// Rendering hint only — never published on the wire.
+export type KioskProfile =
+  | 'continuous' | 'interactive' | 'triggered'
+  | 'audio' | 'projector' | 'catalog' | 'showcase'
+
 export type PlaybackState = 'idle' | 'playing' | 'paused' | 'loading' | 'error'
-
-// App-level states (what screen to show)
 export type AppState = 'loading' | 'screensaver' | 'menu' | 'content' | 'error'
 
-// Settings loaded from settings.json
+// Reserved error codes (STANDARD §Status topics). The Player currently emits
+// only INDEXEDDB_OPEN_FAILED_PERMANENT; the rest are reserved.
+export type KioskErrorCode =
+  | 'INDEXEDDB_OPEN_FAILED'
+  | 'INDEXEDDB_OPEN_FAILED_PERMANENT'
+  | 'CONTENT_SYNC_FAILED'
+  | 'MEDIA_DOWNLOAD_FAILED'
+  | 'SETTINGS_LOAD_FAILED'
+
+export interface KioskError {
+  code: KioskErrorCode | string
+  message: string
+  timestamp: string
+}
+
 export interface KioskSettings {
   kioskId: string
   kioskSlug: string
@@ -19,22 +37,13 @@ export interface KioskSettings {
   mqttUrl: string
   museumId: string
   mode: KioskMode
-  network?: {
-    macAddress?: string
-  }
-  display?: {
-    fullscreen?: boolean
-    cursor?: boolean
-  }
-  debug?: {
-    showDevTools?: boolean
-    logLevel?: 'debug' | 'info' | 'warn' | 'error'
-  }
-  // Content package ID to load (optional, can come from server)
+  profile?: KioskProfile
+  network?: { macAddress?: string }
+  display?: { fullscreen?: boolean; cursor?: boolean }
+  debug?: { showDevTools?: boolean; logLevel?: 'debug' | 'info' | 'warn' | 'error' }
   contentPackageId?: string
 }
 
-// Content types from CMS
 export interface MediaItem {
   id: string
   url: string
@@ -42,15 +51,14 @@ export interface MediaItem {
   mimeType: string
   durationSeconds?: number
   thumbnail?: string
-  // Guide-only flag - if true, item should not be shown to visitors
   guideOnly?: boolean
-  checksum?: string  // SHA-256, from CMS Media collection
+  checksum?: string
 }
 
 export interface Article {
   id: string
   title: string
-  content: any // Rich text content
+  content: any
   coverImage?: MediaItem
 }
 
@@ -60,12 +68,10 @@ export interface MenuItem {
   description?: string
   thumbnail?: MediaItem
   contentType: 'video' | 'article' | 'showcase' | 'submenu'
-  // Content reference based on type
   video?: MediaItem
   article?: Article
   showcaseItems?: ShowcaseItem[]
   submenuItems?: MenuItem[]
-  // Guide-only flag - if true, item should not be shown to visitors
   guideOnly?: boolean
 }
 
@@ -79,24 +85,15 @@ export interface ShowcaseItem {
 export interface ContentPackage {
   id: string
   name: string
+  version?: string
   mode: KioskMode
-  // For browse mode
   menuItems?: MenuItem[]
-  // For loop mode
-  playlist?: {
-    items: MediaItem[]
-    loopPlaylist: boolean
-  }
-  // For showcase mode
+  playlist?: { items: MediaItem[]; loopPlaylist: boolean }
   showcaseItems?: ShowcaseItem[]
-  // Guide-only content (Папка экскурсовода)
-  // Videos/images only accessible to guides, not visible to visitors
-  guideContent?: {
-    items: MediaItem[]
-  }
-  // Screensaver config (v2.5)
+  guideContent?: { items: MediaItem[] }
   screensaver?: {
-    enabled: boolean
+    type?: 'video' | 'image' | 'carousel' | 'animation'
+    enabled?: boolean
     media?: MediaItem[]
     title?: string
     subtitle?: string
@@ -107,38 +104,56 @@ export interface ContentPackage {
   }
 }
 
-// MQTT command from Guide App or CMS
+// Trigger envelope carried by the trigger_play command (STANDARD §Trigger pipeline).
+export interface TriggerEnvelope {
+  mediaId: string
+  mediaUrl: string
+  mediaMimeType: string
+  mediaTitle?: string
+}
+
 export interface KioskCommand {
   action:
     | 'play' | 'pause' | 'stop' | 'volume' | 'content'
     | 'mode' | 'next' | 'prev' | 'home' | 'loop'
     | 'power_off' | 'reboot'
-    | 'sync' | 'restart' | 'locale'
+    | 'sync' | 'restart' | 'quit' | 'locale'
+    | 'screensaver' | 'seek' | 'trigger_play'
   value?: any
+  trigger?: TriggerEnvelope
 }
 
-// MQTT status published by kiosk
+export interface KioskNavigation {
+  nodeId: string | null
+  path?: string[]
+  showcaseOpen?: boolean
+}
+
 export interface KioskStatus {
   kioskId: string
   state: PlaybackState
   mode: KioskMode
+  volume: number
+  locale: string
   currentContent?: {
-    type: 'video' | 'article' | 'showcase'
+    type: string
     id: string
     title?: string
     position?: number
     duration?: number
   }
-  volume: number
-  locale: string
+  navigation?: KioskNavigation
+  screensaverActive?: boolean
   timestamp: string
+  version: string
+  uptime: number
+  error: KioskError | null
+  triggerEnded?: boolean
 }
 
-// MQTT heartbeat published by kiosk
 export interface KioskHeartbeat {
   kioskId: string
   timestamp: string
   version: string
   uptime: number
-  diskFreeGB?: number
 }
