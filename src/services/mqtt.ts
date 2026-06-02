@@ -209,15 +209,13 @@ class MqttService {
    */
   publishStatus(status: Omit<KioskStatus, 'kioskId' | 'timestamp'>): void {
     if (!this.client?.connected || !this.settings) return
-
     const topic = `${this.getBaseTopic()}/status`
-    const fullStatus: KioskStatus = {
+    const full: KioskStatus = {
       ...status,
       kioskId: this.settings.kioskId,
       timestamp: new Date().toISOString(),
     }
-
-    this.client.publish(topic, JSON.stringify(fullStatus), { qos: 0, retain: true })
+    this.client.publish(topic, JSON.stringify(full), { qos: 0, retain: true })
   }
 
   /**

@@ -11,8 +11,11 @@ import type {
   MenuItem,
   MediaItem,
   KioskCommand,
+  KioskError,
+  KioskErrorCode,
 } from '@/types'
 import { mqttService } from './mqtt'
+import { APP_VERSION } from '@/version'
 
 type StateChangeHandler = (state: PlayerState) => void
 type SyncRequestHandler = () => void
@@ -40,7 +43,10 @@ export interface PlayerState {
   sectionPath: string[]
   currentLeafId: string | null
   // Error info
-  error: string | null
+  error: KioskError | null
+  // Trigger pipeline (STANDARD §Trigger pipeline)
+  triggeredPlayActive: boolean
+  triggerEndedPending: boolean
 }
 
 const IDLE_TIMEOUT = 120000 // 2 minutes of inactivity
@@ -85,8 +91,11 @@ class PlayerService {
     sectionPath: [],
     currentLeafId: null,
     error: null,
+    triggeredPlayActive: false,
+    triggerEndedPending: false,
   }
 
+  private startTime = Date.now()
   private contentPackage: ContentPackage | null = null
   private stateHandlers: Set<StateChangeHandler> = new Set()
   private syncRequestHandlers: Set<SyncRequestHandler> = new Set()
@@ -236,6 +245,19 @@ class PlayerService {
         if (typeof window !== 'undefined') {
           window.location.reload()
         }
+        break
+
+      case 'trigger_play':
+        if (command.trigger) this.startTriggeredPlay(command.trigger)
+        break
+
+      case 'seek':
+        // position is applied by the view layer; status re-publishes on next tick
+        this.notifyStateChange()
+        break
+
+      case 'quit':
+        if (typeof window !== 'undefined') window.electronAPI?.quitApp?.()
         break
 
       case 'locale':
@@ -615,9 +637,10 @@ class PlayerService {
   /**
    * Set error state
    */
-  setError(error: string): void {
-    this.state.error = error
+  setError(code: KioskErrorCode | string, message: string): void {
+    this.state.error = { code, message, timestamp: new Date().toISOString() }
     this.state.appState = 'error'
+    this.state.playbackState = 'error'
     this.notifyStateChange()
     this.publishStatus()
   }
@@ -628,8 +651,40 @@ class PlayerService {
   clearError(): void {
     this.state.error = null
     this.state.appState = 'screensaver'
+    this.state.screensaverActive = true
     this.notifyStateChange()
     this.publishStatus()
+  }
+
+  /** Play media delivered in a trigger envelope (STANDARD §Trigger pipeline). */
+  startTriggeredPlay(env: { mediaId: string; mediaUrl: string; mediaMimeType: string; mediaTitle?: string }): void {
+    this.state.currentContent = {
+      id: env.mediaId, url: env.mediaUrl, mimeType: env.mediaMimeType, title: env.mediaTitle,
+    } as MediaItem
+    this.state.appState = 'content'
+    this.state.playbackState = 'playing'
+    this.state.screensaverActive = false
+    this.state.triggeredPlayActive = true
+    this.notifyStateChange()
+    this.publishStatus()
+  }
+
+  /** Called by the view layer when the current media element ends. */
+  onMediaEnded(): void {
+    if (this.state.triggeredPlayActive) {
+      this.state.triggeredPlayActive = false
+      this.state.triggerEndedPending = true
+      this.state.playbackState = 'idle'
+      this.state.currentContent = null
+      this.state.appState = this.state.mode === 'browse' ? 'menu' : 'screensaver'
+      if (this.state.appState === 'screensaver') this.state.screensaverActive = true
+      this.notifyStateChange()
+      this.publishStatus()
+      return
+    }
+    // Non-triggered: advance loop playlists, else stop.
+    if (this.state.mode === 'loop') { this.next(); return }
+    this.stop()
   }
 
   /**
@@ -704,17 +759,26 @@ class PlayerService {
    * Publish status to MQTT
    */
   private publishStatus(): void {
-    const content = this.state.currentContent
+    const content = this.state.currentContent as any
+    const triggerEnded = this.state.triggerEndedPending
+    this.state.triggerEndedPending = false // one-shot
+
     mqttService.publishStatus({
       state: this.state.playbackState,
       mode: this.state.mode,
       volume: this.state.volume,
       locale: this.state.locale,
       currentContent: content ? {
-        type: 'video' in (content as any) ? 'video' : 'article',
-        id: (content as any).id,
-        title: (content as any).title,
+        type: content.contentType ?? ('video' in content ? 'video' : (content.mimeType?.startsWith('video') ? 'video' : 'article')),
+        id: content.id,
+        title: content.title,
       } : undefined,
+      navigation: this.state.mode === 'browse' ? this.state.navigation : undefined,
+      screensaverActive: this.state.screensaverActive,
+      version: APP_VERSION,
+      uptime: Math.floor((Date.now() - this.startTime) / 1000),
+      error: this.state.error,
+      triggerEnded,
     })
   }
 }

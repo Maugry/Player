@@ -306,12 +306,9 @@ function App() {
   }, [])
 
   const handleVideoEnded = useCallback(() => {
-    if (settings?.mode === 'loop') {
-      playerService.next()
-    } else {
-      playerService.stop()
-    }
-  }, [settings?.mode])
+    // Route advance/stop (and trigger-ended) decision through the player service.
+    playerService.onMediaEnded()
+  }, [])
 
   const handleVolumeChange = useCallback((volume: number) => {
     playerService.setVolume(volume)
@@ -338,7 +335,7 @@ function App() {
 
   // Player error
   if (playerState.appState === 'error' && playerState.error) {
-    return <ErrorScreen error={playerState.error} onRetry={handleRetry} />
+    return <ErrorScreen error={playerState.error.message} onRetry={handleRetry} />
   }
 
   // Screensaver
@@ -377,7 +374,7 @@ function App() {
               loop={playerState.looping}
               muted={false}
               playsInline
-              onEnded={() => playerService.next()}
+              onEnded={() => playerService.onMediaEnded()}
               style={{ pointerEvents: 'none' }}
             />
           </div>
@@ -402,7 +399,7 @@ function App() {
             isPlaying={playerState.playbackState === 'playing'}
             onPlay={handlePlay}
             onPause={handlePause}
-            onEnded={() => playerService.next()}
+            onEnded={() => playerService.onMediaEnded()}
             onBack={handleBack}
             onVolumeChange={handleVolumeChange}
             showBackButton={false}
