@@ -2,18 +2,11 @@
 
 This document describes the internal architecture of the Umka Player reference implementation.
 
-> **Note:** This is the simplified MIT reference implementation. It includes power and app lifecycle commands within the player itself. Production deployments should use a separate control plane service for these operations. See the [Control Plane](#control-plane-separation) section and `STANDARD.md` Section 9 for details.
-
----
-
-## Table of Contents
-
-1. [Directory Structure](#directory-structure)
-2. [Service Architecture](#service-architecture)
-3. [State Management](#state-management)
-4. [Data Flow](#data-flow)
-5. [Control Plane Separation](#control-plane-separation)
-6. [Customization Points](#customization-points)
+> **Note:** This is the **all-in-one MIT reference build**. It emulates the Supervisor
+> (Sentinel) control plane within the player itself — power commands and two-tier liveness
+> are demonstrated solo. Everything that moves to a separate Sentinel in production is
+> isolated in `src/services/supervisor.ts`. See [Control Plane Separation](#control-plane-separation)
+> and the *Supervisor (control plane)* section of the [canonical standard](https://github.com/Maugry/Standard).
 
 ---
 
@@ -84,9 +77,9 @@ The `PlayerService` is the central state machine managing the entire application
 ┌─────────────────────────────────────────────┐
 │          PlayerService (State Machine)       │
 ├─────────────────────────────────────────────┤
-│  AppState: screensaver | menu | content | error
-│  Mode: browse | loop | projector | audio
-│  PlaybackState: idle | playing | paused
+│  AppState: loading | screensaver | menu | content | error
+│  Mode: loop | browse | custom
+│  PlaybackState: idle | playing | paused | loading | error
 │  CurrentContent: MenuItem | MediaItem | null
 │  Volume: 0-100
 │  Locale: "ru" | "en"
@@ -104,8 +97,8 @@ Browse Mode:
 Loop Mode:
   content[0] --next--> content[1] --next--> ... --loop--> content[0]
 
-Projector Mode:
-  screensaver --trigger--> content --end--> screensaver
+Triggered (loop profile / trigger pipeline):
+  screensaver --trigger_play--> content --end--> screensaver (triggerEnded: true once)
 ```
 
 ### React State Updates
@@ -229,13 +222,13 @@ publishStatus()               // Send status to MQTT
 **Responsibilities:**
 - Connect to MQTT broker
 - Subscribe to command topics
-- Parse and route commands
+- Parse and route commands (per-topic payload parsing)
 - Publish status and heartbeat
 - Handle reconnection
 
 **Topic Subscriptions:**
 ```typescript
-umka/kiosks/{slug}/commands/power      // Reference impl only — moves to Service in production
+umka/kiosks/{slug}/commands/power      // Supervisor-emulated — owned by the Sentinel in production
 umka/kiosks/{slug}/commands/app
 umka/kiosks/{slug}/commands/playback
 umka/kiosks/{slug}/commands/volume
@@ -243,16 +236,44 @@ umka/kiosks/{slug}/commands/locale
 umka/kiosks/{slug}/commands/loop
 ```
 
+**Per-topic payload parsing:** `parseCommand(leaf, raw)` keys on the topic leaf rather than
+blindly `JSON.parse`-ing every payload: `volume` → bare integer, `locale` → bare/JSON string,
+`loop` → bare boolean, `power` → bare string, `playback`/`app` → JSON `{ action, ... }`.
+A payload that does not match its topic's expected shape is logged and ignored (MUST per
+standard). For `commands/app`, only JSON `{ action }` is acted on; bare strings (the
+Supervisor's `start`/`stop`/`restart`) are ignored.
+
 **Publications:**
 ```typescript
-umka/kiosks/{slug}/status      // On state change (QoS 0, retain)
-umka/kiosks/{slug}/heartbeat   // Every 10s (QoS 0)
+umka/kiosks/{slug}/status             // On state change (QoS 0, retain)
+umka/kiosks/{slug}/heartbeat          // Every 10s (QoS 0)
+umka/kiosks/{slug}/system/heartbeat   // Supervisor emulation (see supervisor.ts)
 ```
 
 **Reconnection:**
 - Auto-reconnect every 5 seconds on connection loss
 - Resubscribe to all topics on reconnect
 - Resume heartbeat immediately
+
+---
+
+### Supervisor Service (`src/services/supervisor.ts`)
+
+**The isolated control-plane seam.** This single file holds everything that "moves to the
+Sentinel in production". The all-in-one reference build runs it so it can demonstrate
+two-tier liveness without a separate process; a production deployment **deletes this file**
+and runs a real Sentinel.
+
+**Responsibilities (emulated):**
+- Publish `system/heartbeat` every 10s, retained, with `player` and `system` blocks
+  (`cpuPercent`/`memoryPercent` are reported as `0`; a real Sentinel measures them)
+- Register the MQTT Last Will (LWT) on `system/heartbeat` (set up in `mqtt.ts` `connect`) —
+  on ungraceful disconnect the broker publishes `status:"offline"` with **no** `graceful` flag
+- Publish graceful-offline (`{ status:"offline", graceful:true }`, retained) on clean shutdown
+
+**Deliberately NOT done** (inherently the real Sentinel's job): `system/crash` self-reporting
+and Wake-on-LAN emission. A running process cannot reliably report its own crash or power
+itself on. `commands/power` handling is also Supervisor-emulated.
 
 ---
 
@@ -311,48 +332,73 @@ Registered in Electron main process for secure local file access.
 
 ## Control Plane Separation
 
-### Reference Implementation (This Repo)
+### Reference Build (This Repo)
 
-This simplified MIT reference implementation handles everything in one Electron application:
-- Power commands (`shutdown`, `reboot`) are handled via Electron IPC in the main process
-- App restart uses `window.location.reload()`
-- No external watchdog or system health reporting
+This all-in-one MIT reference build **emulates** the Supervisor (Sentinel) control plane
+within the single Electron application, so it can demonstrate the full standard — including
+two-tier liveness — solo:
+- Power commands (`off`/`shutdown`/`reboot`) are Supervisor-emulated and dispatched via Electron IPC
+- App `restart` uses `window.location.reload()` (renderer reload — the documented dev path)
+- `system/heartbeat`, LWT, and graceful-offline are emulated in `src/services/supervisor.ts`
 
-This is acceptable for development, testing, and small deployments.
+This is acceptable for development, testing, and demos.
+
+### Ownership: Player vs. Supervisor vs. CMS/Bridge
+
+The standard assigns wire responsibilities explicitly. The design doc
+(`docs/specs/2026-06-02-player-standard-v1.26.5.1-design.md`) carries the full ownership
+table; the essentials:
+
+| Concern | Owner | Player's role |
+|---------|-------|---------------|
+| `commands/playback`, `volume`, `locale`, `loop` | Player | Subscribe + act |
+| `commands/app` JSON `{action}` (`sync`/`mode`/`quit`/`restart`) | Player | Subscribe + act (`restart` = renderer reload) |
+| `commands/app` bare string (`start`/`stop`/`restart`) | Supervisor | Ignore (wrong shape) |
+| `commands/power` (bare string) | Supervisor | **Emulated** in this build |
+| `status`, `heartbeat` | Player | Publish |
+| `system/heartbeat`, LWT, graceful-offline | Supervisor | **Emulated** in this build |
+| `system/crash`, Wake-on-LAN | Supervisor / WoL relay | None (impossible for a running process) |
+| `museum/.../iot/...` (status + command) | CMS + Bridge | **None** |
+
+**There is no Player-side IoT wire work.** The standard's *reads direct, writes through CMS*
+architecture puts all IoT command publishing in the CMS and all polling in the Bridge. The
+Player participates only by emitting accurate `navigation.path`, `screensaverActive`, and
+`triggerEnded` on its `status`, which the CMS keys on for event→action bindings.
 
 ### Production Architecture
 
-Production deployments separate the **control plane** (Service) from the **content plane** (Player):
+Production deployments separate the **control plane** (Sentinel) from the **content plane** (Player):
 
 ```
 ┌─────────────────────────────────────────────────┐
 │                    MQTT Broker                    │
 │                                                  │
-│  system/*       ← Service (power, lifecycle)     │
-│  commands/*     ← Player (playback, content)     │
+│  system/* + commands/power ← Sentinel             │
+│  commands/* (content)      ← Player               │
 └──────────┬───────────────────┬───────────────────┘
            │                   │
      ┌─────▼──────┐     ┌─────▼──────┐
-     │   Service   │     │   Player   │
+     │  Sentinel   │     │   Player   │
      │  (control)  │     │ (Electron) │
      └─────────────┘     └────────────┘
 ```
 
-**Why separate?** If the player hangs or crashes, the kiosk remains remotely manageable. The service can reboot the PC, kill and restart the player, and report system health — all independently.
+**Why separate?** If the player hangs or crashes, the kiosk remains remotely manageable. The
+Sentinel can reboot the PC, kill and restart the player, and report system health — all independently.
 
-**What changes in the player for production:**
-- Remove power command handlers (`system-shutdown`, `system-reboot` IPC handlers)
-- Remove `restart` command handler from player service
-- Remove `commands/power` MQTT subscription
-- Add `updating.lock` file write before auto-updates (so the service pauses its watchdog)
+**What changes in the player for production:** delete `src/services/supervisor.ts` and remove
+its single import. Everything that moves to the Sentinel — `system/heartbeat`, LWT,
+graceful-offline, and `commands/power` emulation — lives behind that one seam. Power IPC
+handlers in the Electron main process are likewise dropped.
 
 **What stays the same:**
 - All playback, navigation, content, volume, locale commands
-- Player heartbeat and status publishing
+- Player heartbeat and `status` publishing
 - Content sync
 - electron-builder auto-update flow
 
-See `STANDARD.md` Section 9 for the full control plane specification.
+See the *Supervisor (control plane)* section of the [canonical standard](https://github.com/Maugry/Standard)
+for the full control plane specification.
 
 ---
 
@@ -412,7 +458,7 @@ case 'custom_action':
 `${baseTopic}/commands/custom`
 ```
 
-4. **Document in `STANDARD.md`** if it should be part of the standard
+4. **Document in the [canonical standard](https://github.com/Maugry/Standard)** if it should be part of the standard
 
 ---
 
@@ -546,15 +592,15 @@ Create test content packages in `public/mock-data/` for development.
 
 ## Browser vs Electron Differences
 
-| Feature | Browser | Electron (Reference) | Electron + Service (Production) |
+| Feature | Browser | Electron (Reference) | Electron + Sentinel (Production) |
 |---------|---------|----------|----------|
 | Media caching | Blob URLs (temp) | File system (persistent) | File system (persistent) |
-| Power control | Not available | OS commands via IPC | Handled by Service |
-| App lifecycle | Not available | Self-restart | Managed by Service |
-| Watchdog | Not available | Not available | Service monitors player |
-| System health | Not available | Not available | Service reports CPU/RAM/disk |
+| Power control | Not available | Supervisor-emulated (IPC) | Handled by Sentinel |
+| App lifecycle | Not available | Renderer reload / self-quit | Managed by Sentinel |
+| Watchdog | Not available | Not available | Sentinel monitors player |
+| System health | Not available | Emulated (cpu/mem = 0) | Sentinel reports CPU/RAM/disk |
 | Kiosk mode | Fullscreen API | OS-level kiosk mode | OS-level kiosk mode |
-| Auto-start | Not available | Startup configuration | Service starts player |
+| Auto-start | Not available | Startup configuration | Sentinel starts player |
 | File access | Limited | Full filesystem | Full filesystem |
 
 **Development:**
@@ -622,9 +668,9 @@ fetch(url, {
 
 When adding features:
 1. Check if it should be in the **standard** (affects all clients)
-2. If yes: Update `STANDARD.md` and reference implementation
+2. If yes: Update the [canonical standard](https://github.com/Maugry/Standard) and reference implementation
 3. If no: Keep as museum-specific customization
 4. Document in this file if it changes architecture
 
 **Standard compliance:**
-Run compliance checklist in `STANDARD.md` before release.
+Run the compliance checklist in the [canonical standard](https://github.com/Maugry/Standard) before release.

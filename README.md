@@ -1,8 +1,8 @@
 # Umka Player - Reference Implementation
 
-**Version:** 0.1.0 (Prototype)
+**Version:** 0.2.0 (Prototype)
 **License:** MIT
-**Standard:** Umka Kiosk Standard v1.2
+**Standard:** Umka Kiosk Standard v1.26.5.1
 
 ## Overview
 
@@ -16,10 +16,15 @@ Built on Electron + React + TypeScript, it provides a universal content playback
 - 🎨 **Client Customizations** - Museum-specific features remain proprietary
 - 🔌 **Standards Compliance** - Ensures compatibility with Umka CMS, guide tablets, and IoT devices
 
-This prototype implements the core Umka kiosk standard with offline support, MQTT command handling, and content synchronization.
+This is an **all-in-one reference build**: it demonstrates the full standard surface
+solo — including two-tier liveness — by emulating the Supervisor (Sentinel) control
+plane within the single application (see *Two-Tier Liveness* below and `src/services/supervisor.ts`).
+
+The canonical, versioned specification lives in its own repository:
+**https://github.com/Maugry/Standard**
 
 **📋 Documentation:**
-- [STANDARD.md](./STANDARD.md) - Complete Umka Kiosk Standard v1.2 protocol specification
+- [STANDARD.md](./STANDARD.md) - Pointer to the canonical Umka Kiosk Standard repository
 - [ARCHITECTURE.md](./ARCHITECTURE.md) - Internal architecture and customization guide
 
 ---
@@ -37,15 +42,14 @@ This prototype implements the core Umka kiosk standard with offline support, MQT
 
 ---
 
-## Supported Features (Umka Standard v1.2)
+## Supported Features (Umka Standard v1.26.5.1)
 
 ### ✅ Core Features
 
-- [x] **Multiple Operating Modes**
-  - Loop Mode - Automatic cyclic playback of media playlist (video player)
-    - Continuous (no touch), Interactive (touch + screensaver), Triggered (IoT button), Audio-only, Projector (passive)
-  - Browse Mode - Interactive menu/catalog for visitor content selection (showcase)
-  - Custom Mode - Non-standardized functionality (e.g., interactive game)
+- [x] **Operating Modes & Profiles**
+  - Wire modes: `loop`, `browse`, `custom`
+  - Profiles (content-package configuration, not modes): Continuous, Interactive, Triggered, Audio, Projector, Catalog, Showcase
+  - See *Operating Modes vs. Profiles* below
 
 - [x] **Content Types**
   - Video playback (MP4, WebM)
@@ -55,15 +59,20 @@ This prototype implements the core Umka kiosk standard with offline support, MQT
   - Screensaver (video, image, animation)
 
 - [x] **MQTT Remote Control**
-  - Playback control (play, pause, stop, next, prev)
+  - Playback control (play, pause, stop, next, prev, home, screensaver, seek)
+  - Trigger pipeline (`trigger_play` with media envelope → one-shot `triggerEnded`)
   - Volume adjustment (0-100)
   - Mode switching (loop ↔ browse ↔ custom)
   - Content selection by ID
-  - Power management (shutdown, reboot)
-  - App lifecycle (restart, sync)
-  - IoT trigger events
+  - Power management (off, reboot) — Supervisor-emulated
+  - App lifecycle (sync, restart, quit)
   - Locale switching (ru, en)
   - Loop toggle
+
+- [x] **Two-Tier Liveness** (Supervisor-emulated)
+  - `system/heartbeat` every 10s (retained)
+  - MQTT Last Will (LWT) on ungraceful disconnect
+  - Graceful-offline publish on clean shutdown
 
 - [x] **Status Reporting**
   - Real-time playback status via MQTT
@@ -111,25 +120,49 @@ This prototype implements the core Umka kiosk standard with offline support, MQT
 
 ---
 
-## Operating Modes
+## Operating Modes vs. Profiles
 
-### Loop Mode
-Automatic cyclic playback of a media playlist. Configurable for different hardware setups:
+The Player distinguishes **modes** (the wire-level operating mode, published on `status.mode`)
+from **profiles** (a rendering hint that configures a content package for a particular
+hardware setup). This is the key change from earlier standard versions, where the old
+Projector/Audio/Showcase behaviours were modes.
 
-| Configuration | Use Case | Touch | Display |
-|--------------|----------|-------|---------|
-| Continuous | LED panels, video walls | No | Yes |
-| Interactive | Touchscreen kiosks | Yes (screensaver + controls) | Yes |
-| Triggered | Exhibits with IoT buttons | No (IoT trigger) | Yes |
-| Audio-only | Background music in halls | No | No |
-| Projector | Short-throw projectors | No (passive) | Yes |
+### Modes (wire vocabulary)
+
+The `mode` field on the wire is exactly one of:
+
+| Mode | Description |
+|------|-------------|
+| `loop` | Automatic cyclic playback of a media playlist |
+| `browse` | Interactive menu/catalog for visitor self-service content selection |
+| `custom` | Non-standardized functionality (e.g., interactive game); minimal integration (heartbeat + status) |
+
+`game` is a specialisation of `custom`, **not** a separate mode.
+
+### Profiles (content-package configuration, NOT modes)
+
+A profile is a rendering hint only — it is **never published on the wire**. It decides
+whether controls, screensaver, or a video element are shown, but Loop and Browse behaviour
+are otherwise identical regardless of profile. The Player accepts the following profiles
+(`KioskProfile` in `src/types/index.ts`):
+
+| Profile | Underlying mode | Use case | Touch | Display |
+|---------|-----------------|----------|-------|---------|
+| `continuous` | loop | LED panels, video walls | No | Yes |
+| `interactive` | loop | Touchscreen kiosks (screensaver + controls) | Yes | Yes |
+| `triggered` | loop | Exhibits with IoT buttons (`trigger_play`) | No | Yes |
+| `audio` | loop | Background music in halls | No | No |
+| `projector` | loop | Short-throw projectors (passive) | No | Yes |
+| `catalog` | browse | Standard catalog / menu navigation | Yes | Yes |
+| `showcase` | browse | Single showcase grid opened directly | Yes | Yes |
+
+### Loop mode
 
 ```
 Playlist[0] → Playlist[1] → ... → Playlist[n] → (loop)
 ```
 
-### Browse Mode
-Interactive menu/catalog for visitor content selection:
+### Browse mode
 
 ```
 Screensaver → (touch) → Catalog → (select) → Object Detail
@@ -142,9 +175,12 @@ Screensaver → (touch) → Catalog → (select) → Object Detail
 - Video, article, and image gallery content types
 - Hierarchical navigation (submenus)
 - Configurable screensaver with title, subtitle, and optional "Start" button
+- A Browse package whose only content is top-level `showcaseItems` opens the showcase grid directly (Showcase profile)
 
-### Custom Mode
-Non-standardized functionality (e.g., interactive game). Minimal Umka integration: heartbeat + power management only.
+### Custom mode
+
+Non-standardized functionality (e.g., interactive game). Minimal Umka integration:
+heartbeat + status reporting. Power and lifecycle are handled by the Supervisor.
 
 ---
 
@@ -161,7 +197,7 @@ The standard defines the API contract. Server-side CMS implementation is not pre
 | `/api/media/{id}/file` | GET | Download media file |
 | `/api/kiosks/{kioskSlug}/sync-complete` | POST | Confirm sync |
 
-See [STANDARD.md](./STANDARD.md) Section 6 for full API specification.
+See the *REST API* section of the [canonical standard](https://github.com/Maugry/Standard) for the full API specification.
 
 ---
 
@@ -171,140 +207,75 @@ See [STANDARD.md](./STANDARD.md) Section 6 for full API specification.
 
 ### Topic Structure
 
-All topics follow the pattern:
+All topics use the base topic:
 ```
-umka/kiosks/{kioskSlug}/{category}/{action}
-```
-
-Where `{kioskSlug}` is the unique identifier for each kiosk.
-
----
-
-### Incoming Commands (Server → Kiosk)
-
-#### Power Management
-```
-Topic: umka/kiosks/{kioskSlug}/commands/power
+umka/kiosks/{kioskSlug}/...
 ```
 
-**Payload:**
+Where `{kioskSlug}` is the unique identifier for each kiosk. Commands are subscribed
+at `.../commands/{leaf}`, status is published retained at `.../status`, and the Player
+heartbeat at `.../heartbeat`.
+
+### Per-Topic Payload Parsing
+
+Unlike a blanket `JSON.parse`, each command topic has its own expected payload shape
+(see `parseCommand` in `src/services/mqtt.ts`). A payload that does not match its topic's
+expected shape is logged and ignored.
+
+| Topic (`.../commands/...`) | Payload shape | Example |
+|----------------------------|---------------|---------|
+| `volume` | bare integer 0–100 | `75` |
+| `locale` | bare or JSON string | `"en"` |
+| `loop` | bare boolean | `true` |
+| `power` | bare string (Supervisor-emulated) | `off` / `shutdown` / `reboot` |
+| `playback` | JSON `{ "action", ... }` | see below |
+| `app` | JSON `{ "action", ... }` | see below |
+
+### Playback Commands (`.../commands/playback`)
+
 ```json
-"off"     // Shutdown OS
-"reboot"  // Reboot OS
+{ "action": "play", "mediaId": "media-uuid" }    // Play specific media by ID
+{ "action": "content", "contentId": "menu-uuid" } // Play a specific menu item by ID
+{ "action": "pause" }                             // Pause current playback
+{ "action": "stop" }                              // Stop and return to menu/screensaver
+{ "action": "next" }                              // Next in playlist/showcase
+{ "action": "prev" }                              // Previous in playlist/showcase
+{ "action": "home" }                              // Return to main menu (Browse)
+{ "action": "screensaver" }                       // Force screensaver/idle
+{ "action": "seek", "value": 30 }                 // Seek current media to position (seconds)
+{ "action": "trigger_play",                       // Trigger pipeline (see below)
+  "mediaId": "media-uuid",
+  "mediaUrl": "media-cache://local/...",
+  "mediaMimeType": "video/mp4",
+  "mediaTitle": "Optional title" }
 ```
 
-**Actions:**
-- Saves application state
-- Calls OS shutdown/reboot command
-- Publishes offline status before shutdown
+**Trigger pipeline:** `trigger_play` carries a full media envelope
+(`mediaId`, `mediaUrl`, `mediaMimeType`, `mediaTitle`). The Player plays the enveloped media
+to completion and emits `triggerEnded: true` on `status` **exactly once** when it finishes.
 
----
+### App Commands (`.../commands/app`)
 
-#### Application Control
-```
-Topic: umka/kiosks/{kioskSlug}/commands/app
-```
+Only JSON `{ "action" }` payloads are acted upon. **Bare-string payloads are ignored** —
+those (`start` / `stop` / `restart`) belong to the Supervisor, not the Player.
 
-**Payload:**
 ```json
-{ "action": "sync" }    // Reload content from CMS
-{ "action": "restart" } // Restart application
-{ "action": "mode", "value": "loop" } // Change operating mode
+{ "action": "sync" }     // Trigger content resync from CMS
+{ "action": "mode", "value": "loop" } // Change operating mode (loop | browse | custom)
+{ "action": "restart" }  // Renderer reload (window.location.reload — dev path)
+{ "action": "quit" }     // Graceful application quit (Electron IPC)
 ```
-
-**Actions:**
-- `sync`: Triggers content resync from server
-- `restart`: Relaunches application (preserves state)
-- `mode`: Switches between loop/browse/custom modes
-
----
-
-#### Playback Control
-```
-Topic: umka/kiosks/{kioskSlug}/commands/playback
-```
-
-**Payload:**
-```json
-{ "action": "play", "mediaId": "video-uuid" }   // Play specific media
-{ "action": "play", "contentId": "menu-uuid" }  // Play menu item
-{ "action": "pause" }                           // Pause current playback
-{ "action": "stop" }                            // Stop and return to menu/screensaver
-{ "action": "next" }                            // Next in playlist/showcase
-{ "action": "prev" }                            // Previous in playlist/showcase
-{ "action": "home" }                            // Return to main menu
-```
-
-**Media Playback Behavior:**
-- `mediaId`: Searches playlist, guide content, then menu items
-- `contentId`: Searches menu items by ID
-- Auto-navigates to content in browse mode
-- In loop mode, jumps to specific playlist index
-
----
-
-#### Volume Control
-```
-Topic: umka/kiosks/{kioskSlug}/commands/volume
-```
-
-**Payload:**
-```json
-75  // Volume level 0-100
-```
-
-**Actions:**
-- Sets system volume
-- Persists in player state
-- Publishes updated status
-
----
-
-#### Locale Control
-```
-Topic: umka/kiosks/{kioskSlug}/commands/locale
-```
-
-**Payload:**
-```json
-"ru"  // Russian
-"en"  // English
-```
-
-**Actions:**
-- Switches UI language
-- Triggers content reload if needed
-- Persists preference
-
----
-
-#### Loop Control
-```
-Topic: umka/kiosks/{kioskSlug}/commands/loop
-```
-
-**Payload:**
-```json
-true   // Enable looping
-false  // Disable looping
-```
-
-**Actions:**
-- Toggles video loop behavior
-- Applies to current and future playback
-
----
 
 ### Outgoing Status (Kiosk → Server)
 
 #### Kiosk Status
 ```
 Topic: umka/kiosks/{kioskSlug}/status
-QoS: 0 (fire and forget)
+QoS: 0
 Retain: true
 ```
 
-**Payload:**
+**Payload** (always-present fields plus optional ones):
 ```json
 {
   "kioskId": "uuid",
@@ -312,25 +283,38 @@ Retain: true
   "mode": "browse",          // loop | browse | custom
   "volume": 80,
   "locale": "ru",
-  "currentContent": {
+  "timestamp": "2026-06-02T10:30:00Z",
+  "version": "0.2.0",
+  "uptime": 3600,            // seconds since app start
+  "error": null,             // KioskError | null
+
+  "currentContent": {        // optional
     "type": "video",         // video | article | showcase
     "id": "media-uuid",
     "title": "Video Title",
     "position": 45.2,        // seconds (optional)
     "duration": 120.5        // seconds (optional)
   },
-  "timestamp": "2026-02-06T10:30:00Z"
+  "navigation": {            // optional — Browse mode only
+    "nodeId": "section-uuid",
+    "path": ["root-uuid", "section-uuid"],
+    "showcaseOpen": false
+  },
+  "screensaverActive": false, // optional
+  "triggerEnded": true        // optional — one-shot true after a triggered play ends
 }
 ```
 
-**Published when:**
-- Playback state changes
-- Content changes
-- Volume changes
-- Mode changes
-- Locale changes
+| Field | Presence | Description |
+|-------|----------|-------------|
+| `kioskId`, `state`, `mode`, `volume`, `locale`, `timestamp`, `version`, `uptime`, `error` | always | `error` is `KioskError` or `null` |
+| `currentContent` | optional | Present when there is active/selected content |
+| `navigation` | optional | Browse mode only: `{ nodeId, path[], showcaseOpen }` |
+| `screensaverActive` | optional | Whether the screensaver is currently showing |
+| `triggerEnded` | optional | `true` exactly once after a triggered play completes |
 
----
+**Published when:** playback state, content, volume, mode, locale, navigation, screensaver,
+or error changes.
 
 #### Heartbeat
 ```
@@ -343,16 +327,27 @@ Interval: Every 10 seconds
 ```json
 {
   "kioskId": "uuid",
-  "timestamp": "2026-02-06T10:30:00Z",
-  "version": "0.1.0",
-  "uptime": 3600,           // seconds since app start
-  "diskFreeGB": 45.2        // optional
+  "timestamp": "2026-06-02T10:30:00Z",
+  "version": "0.2.0",
+  "uptime": 3600
 }
 ```
 
-**Server behavior:**
-- No heartbeat for >30s → kiosk marked offline
-- No heartbeat for >5min → alert administrator
+### Supervisor Topics (emulated by this all-in-one build)
+
+`commands/power`, `system/heartbeat`, the MQTT Last Will (LWT), and graceful-offline are
+**Supervisor (Sentinel) topics**. In production a separate Sentinel process owns them; this
+all-in-one reference build emulates them in `src/services/supervisor.ts` so it can
+demonstrate the full standard solo.
+
+- `commands/power` (bare `off` / `shutdown` / `reboot`) — Supervisor-emulated
+- `system/heartbeat` — published every 10s, retained, with `player`/`system` blocks
+- **LWT** — registered on `system/heartbeat`; on ungraceful disconnect the broker publishes `status:"offline"` with **no** `graceful` flag
+- **Graceful-offline** — on clean shutdown the Player publishes `{ status:"offline", graceful:true }` (retained)
+
+The reference build does **not** publish `system/crash` and does **not** emit Wake-on-LAN —
+a running process cannot report its own crash or power itself on; those remain the real
+Sentinel's job in production.
 
 ---
 
@@ -570,7 +565,7 @@ For production deployment, configure Windows kiosk mode:
 
 ### MIT Licensed Reference Implementation
 
-This software is released under the **MIT License** as the reference implementation of the **Umka Kiosk Standard v1.2**.
+This software is released under the **MIT License** as the reference implementation of the **Umka Kiosk Standard v1.26.5.1** (canonical spec: https://github.com/Maugry/Standard).
 
 **Why MIT License?**
 
