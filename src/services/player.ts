@@ -34,6 +34,11 @@ export interface PlayerState {
   currentMenu: MenuItem[] | null
   // Whether the showcase grid is open (used by navigation in browse mode)
   showcaseOpen: boolean
+  // Navigation tracking (mirrors standard status payload navigation object)
+  navigation: { nodeId: string | null; path: string[]; showcaseOpen: boolean }
+  screensaverActive: boolean
+  sectionPath: string[]
+  currentLeafId: string | null
   // Error info
   error: string | null
 }
@@ -75,6 +80,10 @@ class PlayerService {
     menuStack: [],
     currentMenu: null,
     showcaseOpen: false,
+    navigation: { nodeId: null, path: [], showcaseOpen: false },
+    screensaverActive: false,
+    sectionPath: [],
+    currentLeafId: null,
     error: null,
   }
 
@@ -95,6 +104,8 @@ class PlayerService {
     this.state.currentContent = null
     this.state.currentIndex = 0
     this.state.showcaseOpen = false
+    this.state.sectionPath = []
+    this.state.currentLeafId = null
 
     switch (mode) {
       case 'browse': {
@@ -129,6 +140,8 @@ class PlayerService {
         break
     }
 
+    this.state.screensaverActive = this.state.appState === 'screensaver'
+    this.recomputeNavigation()
     this.notifyStateChange()
     this.publishStatus()
   }
@@ -193,6 +206,10 @@ class PlayerService {
 
       case 'home':
         this.goHome()
+        break
+
+      case 'screensaver':
+        this.goToScreensaver()
         break
 
       case 'content':
@@ -265,6 +282,7 @@ class PlayerService {
   wake(): void {
     if (this.state.appState === 'screensaver' && this.state.mode === 'browse') {
       this.state.appState = 'menu'
+      this.state.screensaverActive = false
       this.resetIdleTimer()
       this.notifyStateChange()
       this.publishStatus()
@@ -302,13 +320,20 @@ class PlayerService {
     this.state.playbackState = 'idle'
     this.state.currentContent = null
 
+    this.state.currentLeafId = null
+    this.state.showcaseOpen = false
+
     if (this.state.mode === 'browse') {
       this.state.appState = 'menu'
+      this.state.screensaverActive = false
       this.resetIdleTimer()
     } else {
       this.state.appState = 'screensaver'
+      this.state.screensaverActive = true
+      this.state.sectionPath = []
     }
 
+    this.recomputeNavigation()
     this.notifyStateChange()
     this.publishStatus()
   }
@@ -322,6 +347,11 @@ class PlayerService {
     this.state.currentContent = null
     this.state.playbackState = 'idle'
     this.state.appState = this.state.mode === 'browse' ? 'menu' : 'screensaver'
+    this.state.sectionPath = []
+    this.state.currentLeafId = null
+    this.state.showcaseOpen = false
+    this.state.screensaverActive = this.state.appState === 'screensaver'
+    this.recomputeNavigation()
     this.resetIdleTimer()
     this.notifyStateChange()
     this.publishStatus()
@@ -332,6 +362,7 @@ class PlayerService {
    */
   selectMenuItem(item: MenuItem): void {
     this.resetIdleTimer()
+    this.state.screensaverActive = false
 
     switch (item.contentType) {
       case 'video':
@@ -340,28 +371,38 @@ class PlayerService {
           this.state.appState = 'content'
           this.state.playbackState = 'playing'
         }
+        this.state.currentLeafId = item.id
+        this.state.showcaseOpen = false
         break
 
       case 'article':
         this.state.currentContent = item
         this.state.appState = 'content'
         this.state.playbackState = 'idle'
+        this.state.currentLeafId = item.id
+        this.state.showcaseOpen = false
         break
 
       case 'showcase':
         this.state.currentContent = item
         this.state.currentIndex = 0
         this.state.appState = 'content'
+        this.state.currentLeafId = item.id
+        this.state.showcaseOpen = true
         break
 
       case 'submenu':
         if (item.submenuItems) {
           this.state.menuStack.push(this.state.currentMenu || [])
           this.state.currentMenu = filterGuideOnlyItems(item.submenuItems)
+          this.state.sectionPath.push(item.id)
+          this.state.currentLeafId = null
+          this.state.showcaseOpen = false
         }
         break
     }
 
+    this.recomputeNavigation()
     this.notifyStateChange()
     this.publishStatus()
   }
@@ -377,11 +418,15 @@ class PlayerService {
       this.state.currentContent = null
       this.state.playbackState = 'idle'
       this.state.appState = 'menu'
+      this.state.currentLeafId = null
+      this.state.showcaseOpen = false
     } else if (this.state.menuStack.length > 0) {
       // Go up one menu level
       this.state.currentMenu = this.state.menuStack.pop() || []
+      this.state.sectionPath.pop()
     }
 
+    this.recomputeNavigation()
     this.notifyStateChange()
     this.publishStatus()
   }
@@ -558,6 +603,11 @@ class PlayerService {
     this.state.playbackState = 'idle'
     this.state.menuStack = []
     this.state.currentMenu = filterGuideOnlyItems(this.contentPackage?.menuItems || [])
+    this.state.sectionPath = []
+    this.state.currentLeafId = null
+    this.state.showcaseOpen = false
+    this.state.screensaverActive = true
+    this.recomputeNavigation()
     this.notifyStateChange()
     this.publishStatus()
   }
@@ -580,6 +630,25 @@ class PlayerService {
     this.state.appState = 'screensaver'
     this.notifyStateChange()
     this.publishStatus()
+  }
+
+  /**
+   * Recompute the navigation object from sectionPath + currentLeafId + showcaseOpen.
+   * Mirrors the standard status payload navigation shape.
+   */
+  private recomputeNavigation(): void {
+    const leaf = this.currentLeafIdPresent()
+    const path = leaf
+      ? [...this.state.sectionPath, this.state.currentLeafId!]
+      : [...this.state.sectionPath]
+    const nodeId = leaf
+      ? this.state.currentLeafId!
+      : (this.state.sectionPath.length ? this.state.sectionPath[this.state.sectionPath.length - 1] : null)
+    this.state.navigation = { nodeId, path, showcaseOpen: this.state.showcaseOpen }
+  }
+
+  private currentLeafIdPresent(): boolean {
+    return this.state.currentLeafId !== null
   }
 
   /**
