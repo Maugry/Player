@@ -232,6 +232,11 @@ class StorageService {
    * Download and cache a media file
    */
   async cacheMedia(media: MediaItem, onProgress?: (percent: number) => void): Promise<string> {
+    // When a cached copy exists but is stale, we must force a fresh download:
+    // the main process otherwise reuses any existing non-empty file (offline
+    // recovery), which would leave changed content stale on disk forever.
+    let forceRedownload = false
+
     // Check if already cached
     const cached = await this.getCachedMedia(media.id)
     if (cached) {
@@ -247,6 +252,7 @@ class StorageService {
           return cached.localPath
         }
         console.log(`[Storage] Media ${media.id} changed (content differs), re-downloading`)
+        forceRedownload = true
       }
     }
 
@@ -258,7 +264,8 @@ class StorageService {
         media.url,
         media.id,
         media.mimeType,
-        onProgress
+        onProgress,
+        forceRedownload
       )
 
       // Record the actual on-disk size so future syncs can apply the
@@ -602,7 +609,10 @@ declare global {
         url: string,
         id: string,
         mimeType: string,
-        onProgress?: (percent: number) => void
+        onProgress?: (percent: number) => void,
+        // Force a fresh download even if a non-empty file already exists on disk
+        // (used when the cached copy is known to be stale).
+        force?: boolean
       ) => Promise<string>
       fileExists: (path: string) => Promise<boolean>
       // Size in bytes of a cached file on disk (-1 if missing)

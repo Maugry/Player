@@ -182,22 +182,23 @@ ipcMain.handle('get-file-size', async (_event, filePath: string) => {
 })
 
 // Download media file with progress
-ipcMain.handle('download-media', async (event, url: string, id: string, mimeType: string) => {
+ipcMain.handle('download-media', async (event, url: string, id: string, mimeType: string, force?: boolean) => {
   ensureMediaCacheDir()
 
   const ext = getExtensionFromMimeType(mimeType)
   const fileName = `${id}${ext}`
   const filePath = path.join(MEDIA_CACHE_DIR, fileName)
 
-  // Reuse an existing non-empty file so a wiped-DB kiosk can restore metadata
-  // and keep working offline. An empty leftover is removed before re-download.
   if (fs.existsSync(filePath)) {
     const info = getFileInfo(filePath)
-    if (info.exists && info.size > 0) {
+    // Reuse an existing non-empty file so a wiped-DB kiosk can restore metadata
+    // and keep working offline — UNLESS the caller forces a re-download because
+    // the cached copy is known stale. An empty leftover is always removed.
+    if (!force && info.exists && info.size > 0) {
       log.info('[Main] Reusing existing cached media file:', filePath)
       return filePath
     }
-    log.warn('[Main] Removing empty cached media before redownload:', filePath)
+    log.warn('[Main] Removing cached media before redownload:', filePath)
     removeFileIfExists(filePath)
   }
 

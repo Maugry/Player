@@ -27,14 +27,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     url: string,
     id: string,
     mimeType: string,
-    onProgress?: (percent: number) => void
+    onProgress?: (percent: number) => void,
+    force?: boolean
   ): Promise<string> => {
     if (onProgress) {
       progressCallbacks.set(id, onProgress)
     }
 
     try {
-      const result = await ipcRenderer.invoke('download-media', url, id, mimeType)
+      const result = await ipcRenderer.invoke('download-media', url, id, mimeType, force)
       return result
     } finally {
       progressCallbacks.delete(id)
