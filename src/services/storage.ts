@@ -7,7 +7,7 @@
  * - File system (via Electron) for media files
  */
 
-import type { ContentPackage, MediaItem, KioskSettings } from '@/types'
+import type { ContentPackage, MediaItem, MenuItem, KioskSettings } from '@/types'
 
 const DB_NAME = 'umka-kiosk'
 const DB_VERSION = 1
@@ -441,51 +441,37 @@ class StorageService {
    */
   private extractMediaFromPackage(pkg: ContentPackage): MediaItem[] {
     const media: MediaItem[] = []
+    const seen = new Set<string>()
 
-    // Playlist items
-    if (pkg.playlist?.items) {
-      media.push(...pkg.playlist.items.filter(m => m.url))
+    const add = (item?: MediaItem | null) => {
+      if (!item?.url) return
+      const key = item.id || item.url
+      if (seen.has(key)) return
+      seen.add(key)
+      media.push(item)
     }
 
-    // Menu items
-    if (pkg.menuItems) {
-      for (const item of pkg.menuItems) {
-        if (item.thumbnail?.url) media.push(item.thumbnail)
-        if (item.video?.url) media.push(item.video)
-        if (item.showcaseItems) {
-          for (const si of item.showcaseItems) {
-            if (si.image?.url) media.push(si.image)
-          }
-        }
-        // Recursively handle submenus
-        if (item.submenuItems) {
-          const subPkg: ContentPackage = {
-            id: 'sub',
-            name: 'sub',
-            mode: 'browse',
-            menuItems: item.submenuItems
-          }
-          media.push(...this.extractMediaFromPackage(subPkg))
-        }
+    pkg.playlist?.items.forEach(add)
+
+    const addMenu = (items?: MenuItem[]) => {
+      if (!items) return
+      for (const item of items) {
+        add(item.thumbnail)
+        add(item.video)
+        item.showcaseItems?.forEach(si => add(si.image))
+        addMenu(item.submenuItems)
       }
     }
+    addMenu(pkg.menuItems)
 
     // Screensaver (v2.5 - media is an array)
-    if (pkg.screensaver?.media) {
-      media.push(...pkg.screensaver.media.filter(m => m.url))
-    }
+    pkg.screensaver?.media?.forEach(add)
 
     // Showcase items
-    if (pkg.showcaseItems) {
-      for (const si of pkg.showcaseItems) {
-        if (si.image?.url) media.push(si.image)
-      }
-    }
+    pkg.showcaseItems?.forEach(si => add(si.image))
 
     // Guide content (Папка экскурсовода) - also needs to be cached for playback
-    if (pkg.guideContent?.items) {
-      media.push(...pkg.guideContent.items.filter(m => m.url))
-    }
+    pkg.guideContent?.items.forEach(add)
 
     return media
   }
