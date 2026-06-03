@@ -62,6 +62,13 @@ interface CachedMedia {
   checksum?: string  // SHA-256 from CMS
 }
 
+interface CachePackageOptions {
+  // When provided and it returns false at commit time, the freshly cached media
+  // is kept but this package is NOT promoted to the active package / sync state
+  // — a newer sync has superseded this one mid-download.
+  shouldPersistAsActive?: () => boolean
+}
+
 class StorageService {
   private db: IDBDatabase | null = null
   private mediaBasePath: string = ''
@@ -406,7 +413,8 @@ class StorageService {
    */
   async cacheContentPackage(
     pkg: ContentPackage,
-    onProgress?: (current: number, total: number, mediaId: string) => void
+    onProgress?: (current: number, total: number, mediaId: string) => void,
+    options?: CachePackageOptions
   ): Promise<void> {
     const mediaItems = this.extractMediaFromPackage(pkg)
     const total = mediaItems.length
@@ -433,6 +441,12 @@ class StorageService {
     }
 
     await Promise.all(Array.from({ length: concurrency }, () => runWorker()))
+
+    const shouldPersistAsActive = options?.shouldPersistAsActive?.() ?? true
+    if (!shouldPersistAsActive) {
+      console.log('[Storage] Content package cached, skipped active commit for a superseded sync')
+      return
+    }
 
     // Save the package metadata
     await this.saveContentPackage(pkg)

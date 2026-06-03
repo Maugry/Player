@@ -47,3 +47,35 @@ describe('cacheContentPackage concurrency', () => {
     expect(maxInFlight).toBeGreaterThan(1) // proves it actually parallelised
   })
 })
+
+describe('cacheContentPackage staleness guard', () => {
+  it('skips the package + sync-state commit when shouldPersistAsActive() returns false', async () => {
+    (storageService as any).cacheMedia = vi.fn(async (m: any) => '/c/' + m.id)
+    const savePkg = vi.fn(async () => {})
+    const saveSync = vi.fn(async () => {})
+    ;(storageService as any).saveContentPackage = savePkg
+    ;(storageService as any).saveSyncState = saveSync
+
+    const pkg = { id: 'p', name: 'P', mode: 'browse' as const, playlist: { items: [{ id: 'm1', url: 'http://x/1', mimeType: 'image/jpeg' }], loopPlaylist: true } }
+
+    await storageService.cacheContentPackage(pkg as any, undefined, { shouldPersistAsActive: () => false })
+
+    expect((storageService as any).cacheMedia).toHaveBeenCalledTimes(1) // media still cached
+    expect(savePkg).not.toHaveBeenCalled() // but not committed as active
+    expect(saveSync).not.toHaveBeenCalled()
+  })
+
+  it('commits by default when no options are given', async () => {
+    (storageService as any).cacheMedia = vi.fn(async (m: any) => '/c/' + m.id)
+    const savePkg = vi.fn(async () => {})
+    const saveSync = vi.fn(async () => {})
+    ;(storageService as any).saveContentPackage = savePkg
+    ;(storageService as any).saveSyncState = saveSync
+    const pkg = { id: 'p', name: 'P', mode: 'browse' as const, playlist: { items: [], loopPlaylist: true } }
+
+    await storageService.cacheContentPackage(pkg as any)
+
+    expect(savePkg).toHaveBeenCalledTimes(1)
+    expect(saveSync).toHaveBeenCalledTimes(1)
+  })
+})
