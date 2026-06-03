@@ -337,6 +337,44 @@ class StorageService {
     })
   }
 
+  /** Delete a cached-media metadata record by id. */
+  private async deleteCachedMedia(id: string): Promise<void> {
+    if (!this.db) return
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction([STORE_MEDIA], 'readwrite')
+      const request = transaction.objectStore(STORE_MEDIA).delete(id)
+      request.onsuccess = () => resolve()
+      request.onerror = () => reject(request.error)
+    })
+  }
+
+  /**
+   * Confirm a cached file is still intact on disk (Electron only). Returns the
+   * (possibly size-migrated) record, or null if the file is missing/empty or
+   * its size no longer matches the recorded size — in which case the stale
+   * metadata entry is deleted so callers fall back to a fresh fetch.
+   */
+  private async validateCachedFile(cached: CachedMedia): Promise<CachedMedia | null> {
+    if (!this.isElectron) return cached
+    const diskSize = await this.localFileSize(cached)
+    if (diskSize === null || diskSize <= 0) {
+      console.warn('[Storage] Cached media missing or empty:', cached.id)
+      await this.deleteCachedMedia(cached.id)
+      return null
+    }
+    if (cached.size <= 0) {
+      const migrated = { ...cached, size: diskSize }
+      await this.saveCachedMedia(migrated)
+      return migrated
+    }
+    if (cached.size !== diskSize) {
+      console.warn('[Storage] Cached media size mismatch:', { id: cached.id, expected: cached.size, actual: diskSize })
+      await this.deleteCachedMedia(cached.id)
+      return null
+    }
+    return cached
+  }
+
   /**
    * Get local URL for a media item (cached or original)
    */
@@ -344,14 +382,17 @@ class StorageService {
     if (this.isElectron) {
       const cached = await this.getCachedMedia(media.id)
       if (cached) {
-        // Use custom media-cache:// protocol (registered in Electron main process)
-        // URL format: media-cache://local/filename.mp4
-        // Split by both / and \ to handle Windows and Unix paths
-        const fileName = cached.localPath.split(/[/\\]/).pop()
-        return `media-cache://local/${fileName}`
+        const valid = await this.validateCachedFile(cached)
+        if (valid) {
+          // Use custom media-cache:// protocol (registered in Electron main).
+          // URL format: media-cache://local/filename.mp4
+          // Split by both / and \ to handle Windows and Unix paths.
+          const fileName = valid.localPath.split(/[/\\]/).pop()
+          return `media-cache://local/${fileName}`
+        }
       }
     }
-    // In browser mode, always use the original HTTP URL
+    // Browser mode (or dropped cache entry): use the original HTTP URL.
     // (blob URLs don't persist and file paths don't work in browsers)
     return media.url
   }
