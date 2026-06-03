@@ -58,4 +58,24 @@ describe('serve-time cache validation', () => {
     expect(url).toBe('http://x/m1.mp4') // fell back to original
     expect(db._store.has('m1')).toBe(false) // bad entry deleted
   })
+
+  it('keeps the entry on a transient stat failure when the file still exists', async () => {
+    (window as any).electronAPI.getFileSize = vi.fn(async () => -1) // stat threw (transient)
+    ;(window as any).electronAPI.fileExists = vi.fn(async () => true) // but file is present
+    const db = fakeDbWith({ id: 'm1', originalUrl: 'u', localPath: '/c/m1.mp4', mimeType: 'video/mp4', size: 100, downloadedAt: 'x' })
+    ;(storageService as any).db = db
+    const url = await storageService.getMediaUrl({ id: 'm1', url: 'http://x/m1.mp4', mimeType: 'video/mp4' })
+    expect(url).toBe('media-cache://local/m1.mp4') // still served from cache
+    expect(db._store.has('m1')).toBe(true) // entry NOT evicted on a transient error
+  })
+
+  it('drops the entry when the file is confirmed absent', async () => {
+    (window as any).electronAPI.getFileSize = vi.fn(async () => -1)
+    ;(window as any).electronAPI.fileExists = vi.fn(async () => false) // confirmed gone
+    const db = fakeDbWith({ id: 'm1', originalUrl: 'u', localPath: '/c/m1.mp4', mimeType: 'video/mp4', size: 100, downloadedAt: 'x' })
+    ;(storageService as any).db = db
+    const url = await storageService.getMediaUrl({ id: 'm1', url: 'http://x/m1.mp4', mimeType: 'video/mp4' })
+    expect(url).toBe('http://x/m1.mp4') // fell back to original
+    expect(db._store.has('m1')).toBe(false) // evicted
+  })
 })

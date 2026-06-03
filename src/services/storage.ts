@@ -375,8 +375,23 @@ class StorageService {
   private async validateCachedFile(cached: CachedMedia): Promise<CachedMedia | null> {
     if (!this.isElectron) return cached
     const diskSize = await this.localFileSize(cached)
-    if (diskSize === null || diskSize <= 0) {
-      console.warn('[Storage] Cached media missing or empty:', cached.id)
+    if (diskSize === null) {
+      // The size could not be determined: either the file is truly gone or the
+      // stat hit a transient error (lock/AV scan). Only evict on a *confirmed*
+      // absence; otherwise keep serving the cache rather than forcing a refetch
+      // that would fail offline.
+      const exists = window.electronAPI?.fileExists
+        ? await window.electronAPI.fileExists(cached.localPath)
+        : true
+      if (!exists) {
+        console.warn('[Storage] Cached media missing:', cached.id)
+        await this.deleteCachedMedia(cached.id)
+        return null
+      }
+      return cached
+    }
+    if (diskSize <= 0) {
+      console.warn('[Storage] Cached media empty:', cached.id)
       await this.deleteCachedMedia(cached.id)
       return null
     }
