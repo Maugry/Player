@@ -1,10 +1,12 @@
-import { app, BrowserWindow, ipcMain, protocol, net, session } from 'electron'
-import { fileURLToPath, pathToFileURL } from 'node:url'
+import { app, BrowserWindow, ipcMain, protocol, session } from 'electron'
+import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import fs from 'node:fs'
 import https from 'node:https'
 import http from 'node:http'
+import { Readable } from 'node:stream'
 import { isDownloadComplete } from './download-validate'
+import { resolveRange, getMimeTypeFromFilePath } from './media-range'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -340,9 +342,8 @@ protocol.registerSchemesAsPrivileged([
 app.whenReady().then(() => {
   // Register protocol handler for media-cache://
   // URL format: media-cache://local/filename.mp4
-  protocol.handle('media-cache', (request) => {
+  protocol.handle('media-cache', async (request) => {
     const { host, pathname } = new URL(request.url)
-    console.log('[Protocol] Request:', request.url, 'host:', host, 'pathname:', pathname)
 
     if (host === 'local') {
       const fileName = decodeURIComponent(pathname.substring(1)) // Remove leading /
@@ -356,8 +357,45 @@ app.whenReady().then(() => {
         return new Response('Forbidden', { status: 403, headers: { 'content-type': 'text/plain' } })
       }
 
-      console.log('[Protocol] Serving file:', filePath)
-      return net.fetch(pathToFileURL(filePath).toString())
+      let fileSize = 0
+      try {
+        const stats = await fs.promises.stat(filePath)
+        if (!stats.isFile()) throw new Error('NOT_A_FILE')
+        fileSize = stats.size
+      } catch {
+        console.error('[Protocol] File not found:', filePath)
+        return new Response('Not Found', { status: 404, headers: { 'content-type': 'text/plain' } })
+      }
+
+      const mimeType = getMimeTypeFromFilePath(filePath)
+      const range = resolveRange(request.headers.get('range'), fileSize)
+
+      if (range.status === 416) {
+        return new Response('Range Not Satisfiable', {
+          status: 416,
+          headers: { 'content-type': 'text/plain', 'accept-ranges': 'bytes', 'content-range': `bytes */${fileSize}` },
+        })
+      }
+
+      if (range.status === 206) {
+        const chunkSize = range.end - range.start + 1
+        const stream = Readable.toWeb(fs.createReadStream(filePath, { start: range.start, end: range.end })) as ReadableStream
+        return new Response(stream, {
+          status: 206,
+          headers: {
+            'content-type': mimeType,
+            'accept-ranges': 'bytes',
+            'content-length': String(chunkSize),
+            'content-range': `bytes ${range.start}-${range.end}/${fileSize}`,
+          },
+        })
+      }
+
+      const stream = Readable.toWeb(fs.createReadStream(filePath)) as ReadableStream
+      return new Response(stream, {
+        status: 200,
+        headers: { 'content-type': mimeType, 'accept-ranges': 'bytes', 'content-length': String(fileSize) },
+      })
     }
 
     return new Response('Not Found', { status: 404, headers: { 'content-type': 'text/plain' } })
