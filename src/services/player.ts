@@ -770,9 +770,8 @@ class PlayerService {
       | (Pick<MenuItem, 'id' | 'title'> & Partial<MenuItem> & Partial<MediaItem>)
       | null
     const triggerEnded = this.state.triggerEndedPending
-    this.state.triggerEndedPending = false // one-shot
 
-    mqttService.publishStatus({
+    const published = mqttService.publishStatus({
       state: this.state.playbackState,
       mode: this.state.mode,
       volume: this.state.volume,
@@ -789,6 +788,14 @@ class PlayerService {
       error: this.state.error,
       triggerEnded,
     })
+
+    // Consume the trigger-completion one-shot only when the status was
+    // actually delivered. If the broker was down, the flag is retained so
+    // the next successful publish re-asserts the edge rather than dropping
+    // it (the CMS fallback timers remain the ultimate safety net).
+    if (published && triggerEnded) {
+      this.state.triggerEndedPending = false
+    }
   }
 }
 

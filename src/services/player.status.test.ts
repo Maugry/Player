@@ -4,7 +4,7 @@ import { mqttService } from '@/services/mqtt'
 import type { ContentPackage } from '@/types'
 
 vi.mock('@/services/mqtt', () => ({
-  mqttService: { publishStatus: vi.fn() },
+  mqttService: { publishStatus: vi.fn(() => true) },
 }))
 
 const loopPkg: ContentPackage = {
@@ -63,6 +63,27 @@ describe('status payload', () => {
     // next publish no longer flags it
     ;(mqttService.publishStatus as any).mockClear()
     playerService.setVolume(50)
+    expect(lastStatus().triggerEnded).toBeFalsy()
+  })
+
+  it('retains triggerEnded when the publish is dropped (offline) and re-sends it once on reconnect', () => {
+    playerService.init(loopPkg, 'loop')
+    playerService.handleCommand({
+      action: 'trigger_play',
+      trigger: { mediaId: 'tv', mediaUrl: 'u', mediaMimeType: 'video/mp4', mediaTitle: 'T' },
+    })
+    // Broker is down: publishStatus reports it did not deliver.
+    ;(mqttService.publishStatus as any).mockClear()
+    ;(mqttService.publishStatus as any).mockReturnValueOnce(false)
+    playerService.onMediaEnded()
+    expect(lastStatus().triggerEnded).toBe(true) // attempted...
+    // ...but dropped, so the one-shot is NOT consumed. Next successful publish re-sends it.
+    ;(mqttService.publishStatus as any).mockClear()
+    playerService.setVolume(50)
+    expect(lastStatus().triggerEnded).toBe(true)
+    // and now it has been consumed
+    ;(mqttService.publishStatus as any).mockClear()
+    playerService.setVolume(60)
     expect(lastStatus().triggerEnded).toBeFalsy()
   })
 
