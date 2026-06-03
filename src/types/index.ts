@@ -53,6 +53,7 @@ export interface MediaItem {
   thumbnail?: string
   guideOnly?: boolean
   checksum?: string
+  size?: number  // File size in bytes (CMS filesize); used for cache-skip
 }
 
 export interface Article {

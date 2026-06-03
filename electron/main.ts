@@ -106,6 +106,15 @@ ipcMain.handle('file-exists', async (_event, filePath: string) => {
   return fs.existsSync(filePath)
 })
 
+// Size in bytes of a cached file, or -1 if it does not exist / cannot be read
+ipcMain.handle('get-file-size', async (_event, filePath: string) => {
+  try {
+    return fs.statSync(filePath).size
+  } catch {
+    return -1
+  }
+})
+
 // Download media file with progress
 ipcMain.handle('download-media', async (event, url: string, id: string, mimeType: string) => {
   ensureMediaCacheDir()

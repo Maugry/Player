@@ -27,6 +27,27 @@ interface SyncState {
   packageVersion: string | null
 }
 
+/**
+ * Decide whether a locally cached copy is stale relative to the CMS's media
+ * record and must be re-downloaded. Prefers the CMS content checksum when both
+ * sides expose one (authoritative); otherwise falls back to the Standard's
+ * size-match rule ("size differs → download"). When neither a checksum pair
+ * nor a usable size comparison is available, an existing file is treated as
+ * fresh (existence is the only available signal).
+ */
+export function isCachedCopyStale(
+  media: Pick<MediaItem, 'checksum' | 'size'>,
+  local: { size: number | null; checksum?: string }
+): boolean {
+  if (media.checksum && local.checksum) {
+    return media.checksum !== local.checksum
+  }
+  if (typeof media.size === 'number' && media.size > 0 && local.size !== null) {
+    return local.size !== media.size
+  }
+  return false
+}
+
 interface CachedMedia {
   id: string
   originalUrl: string
@@ -203,25 +224,18 @@ class StorageService {
     // Check if already cached
     const cached = await this.getCachedMedia(media.id)
     if (cached) {
-      // Verify file still exists
-      if (this.isElectron) {
-        const exists = await window.electronAPI!.fileExists(cached.localPath)
-        if (exists) {
-          // Check if content changed via checksum
-          if (media.checksum && cached.checksum && media.checksum !== cached.checksum) {
-            console.log(`[Storage] Media ${media.id} changed (checksum mismatch), re-downloading`)
-          } else {
-            console.log('[Storage] Media already cached:', media.id)
-            return cached.localPath
-          }
-        }
-      } else {
-        // In browser, check checksum if available
-        if (media.checksum && cached.checksum && media.checksum !== cached.checksum) {
-          console.log(`[Storage] Media ${media.id} changed (checksum mismatch), re-downloading`)
-        } else {
+      // In Electron, confirm the file still exists on disk; in the browser the
+      // blob URL is assumed live for the session.
+      const exists = this.isElectron
+        ? await window.electronAPI!.fileExists(cached.localPath)
+        : true
+      if (exists) {
+        const localSize = await this.localFileSize(cached)
+        if (!isCachedCopyStale(media, { size: localSize, checksum: cached.checksum })) {
+          console.log('[Storage] Media already cached:', media.id)
           return cached.localPath
         }
+        console.log(`[Storage] Media ${media.id} changed (content differs), re-downloading`)
       }
     }
 
@@ -236,13 +250,17 @@ class StorageService {
         onProgress
       )
 
+      // Record the actual on-disk size so future syncs can apply the
+      // Standard's size-match skip rule.
+      const size = (await this.localFileSize({ localPath, size: 0 })) ?? 0
+
       // Save metadata to IndexedDB
       await this.saveCachedMedia({
         id: media.id,
         originalUrl: media.url,
         localPath,
         mimeType: media.mimeType,
-        size: 0, // Will be updated by main process
+        size,
         downloadedAt: new Date().toISOString(),
         checksum: media.checksum,
       })
@@ -266,6 +284,25 @@ class StorageService {
 
       return localUrl
     }
+  }
+
+  /**
+   * Resolve the actual size in bytes of a cached file. In Electron this is the
+   * authoritative on-disk size (the previously-stored value was never updated,
+   * so we query the filesystem); in the browser it falls back to the size
+   * recorded at download time. Returns null when no size can be determined.
+   */
+  private async localFileSize(cached: Pick<CachedMedia, 'localPath' | 'size'>): Promise<number | null> {
+    if (this.isElectron && window.electronAPI?.getFileSize) {
+      try {
+        const size = await window.electronAPI.getFileSize(cached.localPath)
+        return typeof size === 'number' && size >= 0 ? size : null
+      } catch (e) {
+        console.error('[Storage] getFileSize failed:', e)
+        return null
+      }
+    }
+    return cached.size > 0 ? cached.size : null
   }
 
   /**
@@ -516,6 +553,8 @@ declare global {
         onProgress?: (percent: number) => void
       ) => Promise<string>
       fileExists: (path: string) => Promise<boolean>
+      // Size in bytes of a cached file on disk (-1 if missing)
+      getFileSize: (path: string) => Promise<number>
       clearMediaCache: () => Promise<void>
       // Wipe the on-disk IndexedDB storage directory (cache-corruption recovery)
       wipeDatabase: () => Promise<void>

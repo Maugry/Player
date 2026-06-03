@@ -199,6 +199,7 @@ class ApiService {
         : undefined,
       guideOnly: data.guideOnly || false,
       checksum: data.checksum || undefined,
+      size: typeof data.filesize === 'number' ? data.filesize : undefined,
     }
   }
 

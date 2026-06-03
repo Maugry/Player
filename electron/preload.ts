@@ -44,6 +44,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Check if a file exists
   fileExists: (path: string) => ipcRenderer.invoke('file-exists', path),
 
+  // Size in bytes of a cached file (-1 if missing)
+  getFileSize: (path: string) => ipcRenderer.invoke('get-file-size', path),
+
   // Clear all cached media
   clearMediaCache: () => ipcRenderer.invoke('clear-media-cache'),
 
