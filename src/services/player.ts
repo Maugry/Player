@@ -386,7 +386,6 @@ class PlayerService {
    * Select a menu item
    */
   selectMenuItem(item: MenuItem): void {
-    this.resetIdleTimer()
     this.state.screensaverActive = false
 
     switch (item.contentType) {
@@ -427,6 +426,9 @@ class PlayerService {
         break
     }
 
+    // Arm the idle timer against the resulting state (so an actively playing
+    // video suppresses it; an article/showcase/submenu re-arms it).
+    this.resetIdleTimer()
     this.recomputeNavigation()
     this.notifyStateChange()
     this.publishStatus()
@@ -607,18 +609,26 @@ class PlayerService {
   }
 
   /**
-   * Reset idle timer
+   * (Re)arm the inactivity timer. Only browse mode auto-returns to the
+   * screensaver, and never while content is actively playing — a long video
+   * must not be interrupted mid-playback. The timer re-arms when playback
+   * pauses, ends, or the visitor returns to the menu (all of which call this).
    */
   private resetIdleTimer(): void {
     if (this.idleTimer) {
       clearTimeout(this.idleTimer)
+      this.idleTimer = null
     }
 
-    if (this.state.mode === 'browse') {
-      this.idleTimer = setTimeout(() => {
-        this.goToScreensaver()
-      }, IDLE_TIMEOUT)
-    }
+    if (this.state.mode !== 'browse') return
+
+    const activelyPlaying =
+      this.state.appState === 'content' && this.state.playbackState === 'playing'
+    if (activelyPlaying) return
+
+    this.idleTimer = setTimeout(() => {
+      this.goToScreensaver()
+    }, IDLE_TIMEOUT)
   }
 
   /**
