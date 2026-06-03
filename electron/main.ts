@@ -47,12 +47,34 @@ process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT, 
 let win: BrowserWindow | null
 
 function createWindow() {
+  const isDev = !!VITE_DEV_SERVER_URL
   win = new BrowserWindow({
+    kiosk: !isDev,            // fullscreen, no chrome; Esc/F11 don't exit
+    fullscreen: !isDev,
+    frame: isDev,             // keep a frame in dev for convenience
+    alwaysOnTop: !isDev,
+    autoHideMenuBar: true,
+    closable: isDev,
+    minimizable: isDev,
+    maximizable: isDev,
+    resizable: isDev,
+    movable: isDev,
+    skipTaskbar: !isDev,
     icon: path.join(process.env.VITE_PUBLIC, 'electron-vite.svg'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.mjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      devTools: isDev,        // no DevTools in production kiosks
     },
   })
+
+  if (!isDev) {
+    // Windows kiosk needs an explicit topmost level, not just the constructor flag.
+    win.setAlwaysOnTop(true, 'screen-saver')
+    win.moveTop()
+  }
 
   const syncWindowToPrimaryDisplay = () => {
     const display = screen.getPrimaryDisplay()
@@ -68,7 +90,10 @@ function createWindow() {
 
   // Test active push message to Renderer-process.
   win.webContents.on('did-finish-load', () => {
-    win?.webContents.send('main-process-message', (new Date).toLocaleString())
+    if (!win) return
+    win.webContents.setZoomFactor(1)
+    void win.webContents.setVisualZoomLevelLimits(1, 1)
+    win.webContents.send('main-process-message', (new Date).toLocaleString())
   })
 
   if (VITE_DEV_SERVER_URL) {
