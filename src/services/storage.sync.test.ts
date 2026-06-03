@@ -19,3 +19,31 @@ describe('extractMediaFromPackage dedup', () => {
     expect(ids).toContain('v1')
   })
 })
+
+describe('cacheContentPackage concurrency', () => {
+  it('caches all items but never runs more than the concurrency limit at once', async () => {
+    let inFlight = 0
+    let maxInFlight = 0
+    const cached: string[] = []
+    // Replace cacheMedia with a controllable async stub.
+    ;(storageService as any).cacheMedia = vi.fn(async (m: any) => {
+      inFlight++
+      maxInFlight = Math.max(maxInFlight, inFlight)
+      await new Promise(r => setTimeout(r, 5))
+      inFlight--
+      cached.push(m.id)
+      return '/c/' + m.id
+    })
+    ;(storageService as any).saveContentPackage = vi.fn(async () => {})
+    ;(storageService as any).saveSyncState = vi.fn(async () => {})
+
+    const items = Array.from({ length: 10 }, (_, i) => ({ id: 'm' + i, url: 'http://x/' + i, mimeType: 'image/jpeg' }))
+    const pkg = { id: 'p', name: 'P', mode: 'browse' as const, playlist: { items, loopPlaylist: true } }
+
+    await storageService.cacheContentPackage(pkg as any)
+
+    expect(cached).toHaveLength(10)
+    expect(maxInFlight).toBeLessThanOrEqual(4)
+    expect(maxInFlight).toBeGreaterThan(1) // proves it actually parallelised
+  })
+})

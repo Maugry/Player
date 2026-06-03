@@ -21,6 +21,10 @@ const STORE_SYNC = 'sync-state'
 // flow, the reference implementation uses 2.
 const MAX_OPEN_ATTEMPTS = 2
 
+// Max simultaneous media downloads during a package sync. Bounds disk/network
+// pressure on slow kiosk storage while still parallelising.
+const CACHE_DOWNLOAD_CONCURRENCY = 4
+
 interface SyncState {
   lastSyncAt: string | null
   packageId: string | null
@@ -409,19 +413,26 @@ class StorageService {
 
     console.log(`[Storage] Caching ${total} media items...`)
 
-    for (let i = 0; i < mediaItems.length; i++) {
-      const media = mediaItems[i]
-      if (onProgress) {
-        onProgress(i + 1, total, media.id)
-      }
+    const concurrency = Math.max(1, Math.min(CACHE_DOWNLOAD_CONCURRENCY, total || 1))
+    let nextIndex = 0
+    let completed = 0
 
-      try {
-        await this.cacheMedia(media)
-      } catch (err) {
-        console.error(`[Storage] Failed to cache media ${media.id}:`, err)
-        // Continue with other files
+    const runWorker = async (): Promise<void> => {
+      while (nextIndex < mediaItems.length) {
+        const media = mediaItems[nextIndex++]
+        try {
+          await this.cacheMedia(media)
+        } catch (err) {
+          console.error(`[Storage] Failed to cache media ${media.id}:`, err)
+          // Continue with other files
+        } finally {
+          completed++
+          onProgress?.(completed, total, media.id)
+        }
       }
     }
+
+    await Promise.all(Array.from({ length: concurrency }, () => runWorker()))
 
     // Save the package metadata
     await this.saveContentPackage(pkg)
