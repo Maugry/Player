@@ -15,6 +15,12 @@ const STORE_PACKAGES = 'content-packages'
 const STORE_MEDIA = 'media-metadata'
 const STORE_SYNC = 'sync-state'
 
+// Maximum number of IndexedDB open() attempts before the failure is declared
+// permanent. Each attempt after the first is preceded by a recovery wipe of
+// the corrupted database. Per the Standard's recovery-from-cache-corruption
+// flow, the reference implementation uses 2.
+const MAX_OPEN_ATTEMPTS = 2
+
 interface SyncState {
   lastSyncAt: string | null
   packageId: string | null
@@ -54,22 +60,43 @@ class StorageService {
   }
 
   /**
-   * Open IndexedDB database
+   * Open IndexedDB database, recovering from a wedged/corrupted database by
+   * wiping it and retrying up to MAX_OPEN_ATTEMPTS times. Only the final,
+   * permanent failure is published (the transient INDEXEDDB_OPEN_FAILED code
+   * is reserved and not emitted by the reference Player).
    */
   private openDatabase(): Promise<void> {
+    return this.openDatabaseAttempt(1)
+  }
+
+  private openDatabaseAttempt(attempt: number): Promise<void> {
     return new Promise((resolve, reject) => {
       const request = indexedDB.open(DB_NAME, DB_VERSION)
 
       request.onerror = () => {
         const err = request.error
-        console.error('[Storage] Failed to open database:', err)
-        // No retry logic exists: a single open() failure is permanent.
-        // Surface the conformant error code via the player service. Lazy
-        // dynamic import avoids any module-level dependency on player.ts.
+        console.error(
+          `[Storage] Failed to open database (attempt ${attempt}/${MAX_OPEN_ATTEMPTS}):`,
+          err
+        )
+
+        if (attempt < MAX_OPEN_ATTEMPTS) {
+          // Recovery: wipe the corrupted database, then re-open. Per the
+          // Standard the renderer asks the main process to wipe the storage
+          // directory; deleteDatabase covers the renderer side.
+          this.wipeDatabase()
+            .then(() => this.openDatabaseAttempt(attempt + 1))
+            .then(resolve, reject)
+          return
+        }
+
+        // Attempts exhausted -> permanent failure. Surface the conformant
+        // error code via the player service. Lazy dynamic import avoids any
+        // module-level dependency on player.ts.
         void import('@/services/player').then(({ playerService }) => {
           playerService.setError(
             'INDEXEDDB_OPEN_FAILED_PERMANENT',
-            `IndexedDB open failed permanently: ${String(err)}`
+            `IndexedDB open failed permanently after ${attempt} attempts: ${String(err)}`
           )
         })
         reject(err)
@@ -98,6 +125,32 @@ class StorageService {
         if (!db.objectStoreNames.contains(STORE_SYNC)) {
           db.createObjectStore(STORE_SYNC, { keyPath: 'id' })
         }
+      }
+    })
+  }
+
+  /**
+   * Wipe the corrupted local database before a re-open attempt. Asks the
+   * Electron main process to delete the on-disk storage directory (handles a
+   * wedged IndexedDB that won't respond to deleteDatabase), then deletes the
+   * IndexedDB instance from the renderer. Best-effort: never rejects.
+   */
+  private async wipeDatabase(): Promise<void> {
+    if (this.isElectron && window.electronAPI?.wipeDatabase) {
+      try {
+        await window.electronAPI.wipeDatabase()
+      } catch (e) {
+        console.error('[Storage] main-process database wipe failed:', e)
+      }
+    }
+    await new Promise<void>((resolve) => {
+      try {
+        const del = indexedDB.deleteDatabase(DB_NAME)
+        del.onsuccess = () => resolve()
+        del.onerror = () => resolve()
+        del.onblocked = () => resolve()
+      } catch {
+        resolve()
       }
     })
   }
@@ -464,6 +517,8 @@ declare global {
       ) => Promise<string>
       fileExists: (path: string) => Promise<boolean>
       clearMediaCache: () => Promise<void>
+      // Wipe the on-disk IndexedDB storage directory (cache-corruption recovery)
+      wipeDatabase: () => Promise<void>
       // Power controls
       shutdown: () => Promise<void>
       reboot: () => Promise<void>

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, protocol, net } from 'electron'
+import { app, BrowserWindow, ipcMain, protocol, net, session } from 'electron'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import path from 'node:path'
 import fs from 'node:fs'
@@ -184,6 +184,13 @@ ipcMain.handle('clear-media-cache', async () => {
       fs.unlinkSync(path.join(MEDIA_CACHE_DIR, file))
     }
   }
+})
+
+// Wipe the renderer's IndexedDB storage (cache-corruption recovery). Clearing
+// it at the session level removes the on-disk database directory that a bare
+// renderer-side deleteDatabase() cannot reach when the DB is wedged.
+ipcMain.handle('wipe-database', async () => {
+  await session.defaultSession.clearStorageData({ storages: ['indexdb'] })
 })
 
 // Get app version

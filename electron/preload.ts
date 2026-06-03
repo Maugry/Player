@@ -47,6 +47,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Clear all cached media
   clearMediaCache: () => ipcRenderer.invoke('clear-media-cache'),
 
+  // Wipe the IndexedDB storage directory (cache-corruption recovery)
+  wipeDatabase: () => ipcRenderer.invoke('wipe-database'),
+
   // Power controls
   shutdown: () => ipcRenderer.invoke('system-shutdown'),
   reboot: () => ipcRenderer.invoke('system-reboot'),
