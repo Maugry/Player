@@ -26,4 +26,12 @@ describe('idle timer suppression during playback', () => {
     vi.advanceTimersByTime(130000)
     expect(playerService.getState().appState).toBe('screensaver')
   })
+
+  it('re-arms the idle timer when a playing video is paused (visitor walked away)', () => {
+    playerService.init(browsePkg, 'browse')
+    playerService.selectMenuItem(browsePkg.menuItems[0]) // playing -> idle suppressed
+    playerService.pause()
+    vi.advanceTimersByTime(130000)
+    expect(playerService.getState().appState).toBe('screensaver')
+  })
 })

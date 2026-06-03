@@ -333,6 +333,9 @@ class PlayerService {
   pause(): void {
     if (this.state.playbackState === 'playing') {
       this.state.playbackState = 'paused'
+      // Playback is no longer active — re-arm the inactivity timer so a paused
+      // video the visitor walked away from still returns to the screensaver.
+      this.resetIdleTimer()
       this.notifyStateChange()
       this.publishStatus()
     }
