@@ -4,6 +4,7 @@ import path from 'node:path'
 import fs from 'node:fs'
 import https from 'node:https'
 import http from 'node:http'
+import { isDownloadComplete } from './download-validate'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -76,6 +77,19 @@ function ensureMediaCacheDir(): void {
   }
 }
 
+function getFileInfo(filePath: string): { exists: boolean; size: number } {
+  try {
+    const stats = fs.statSync(filePath)
+    return { exists: stats.isFile(), size: stats.isFile() ? stats.size : 0 }
+  } catch {
+    return { exists: false, size: 0 }
+  }
+}
+
+function removeFileIfExists(filePath: string): void {
+  if (fs.existsSync(filePath)) fs.unlinkSync(filePath)
+}
+
 // Get file extension from mime type
 function getExtensionFromMimeType(mimeType: string): string {
   const map: Record<string, string> = {
@@ -123,64 +137,86 @@ ipcMain.handle('download-media', async (event, url: string, id: string, mimeType
   const fileName = `${id}${ext}`
   const filePath = path.join(MEDIA_CACHE_DIR, fileName)
 
-  // If file already exists, return its path
+  // Reuse an existing non-empty file so a wiped-DB kiosk can restore metadata
+  // and keep working offline. An empty leftover is removed before re-download.
   if (fs.existsSync(filePath)) {
-    return filePath
+    const info = getFileInfo(filePath)
+    if (info.exists && info.size > 0) {
+      console.log('[Main] Reusing existing cached media file:', filePath)
+      return filePath
+    }
+    console.warn('[Main] Removing empty cached media before redownload:', filePath)
+    removeFileIfExists(filePath)
   }
 
   return new Promise<string>((resolve, reject) => {
-    const protocol = url.startsWith('https') ? https : http
+    const proto = url.startsWith('https') ? https : http
+    let settled = false
+    let fileStream: fs.WriteStream | null = null
 
-    const request = protocol.get(url, (response) => {
-      // Handle redirects
+    const failDownload = (error: Error) => {
+      if (settled) return
+      settled = true
+      if (fileStream && !fileStream.destroyed) fileStream.destroy()
+      try {
+        removeFileIfExists(filePath)
+      } catch (cleanupError) {
+        console.warn('[Main] Failed to remove partial media file:', cleanupError)
+      }
+      reject(error)
+    }
+
+    const request = proto.get(url, (response) => {
       if (response.statusCode === 301 || response.statusCode === 302) {
         const redirectUrl = response.headers.location
         if (redirectUrl) {
-          // Recursively follow redirect
           ipcMain.emit('download-media', event, redirectUrl, id, mimeType)
           return
         }
       }
 
       if (response.statusCode !== 200) {
-        reject(new Error(`HTTP ${response.statusCode}`))
+        failDownload(new Error(`HTTP ${response.statusCode}`))
         return
       }
 
       const totalSize = parseInt(response.headers['content-length'] || '0', 10)
       let downloadedSize = 0
-
-      const fileStream = fs.createWriteStream(filePath)
+      fileStream = fs.createWriteStream(filePath)
 
       response.on('data', (chunk) => {
         downloadedSize += chunk.length
         if (totalSize > 0) {
           const percent = Math.round((downloadedSize / totalSize) * 100)
-          // Send progress to renderer
           event.sender.send('download-progress', { id, percent })
         }
       })
 
+      response.on('aborted', () => failDownload(new Error('Download aborted')))
       response.pipe(fileStream)
 
       fileStream.on('finish', () => {
-        fileStream.close()
-        resolve(filePath)
+        fileStream!.close((closeErr) => {
+          if (closeErr) { failDownload(closeErr); return }
+          const info = getFileInfo(filePath)
+          if (!isDownloadComplete({ totalSize, actualSize: info.size })) {
+            failDownload(new Error(
+              `Downloaded file invalid: expected ${totalSize}, got ${info.size}`))
+            return
+          }
+          if (settled) return
+          settled = true
+          resolve(filePath)
+        })
       })
 
-      fileStream.on('error', (err) => {
-        fs.unlink(filePath, () => {}) // Clean up partial file
-        reject(err)
-      })
+      fileStream.on('error', (err) => failDownload(err))
     })
 
-    request.on('error', (err) => {
-      reject(err)
-    })
-
+    request.on('error', (err) => failDownload(err))
     request.setTimeout(30000, () => {
       request.destroy()
-      reject(new Error('Download timeout'))
+      failDownload(new Error('Download timeout'))
     })
   })
 })
