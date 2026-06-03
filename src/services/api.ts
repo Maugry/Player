@@ -15,6 +15,8 @@
 
 import type { KioskSettings, ContentPackage, MediaItem, Article } from '@/types'
 
+const CMS_REQUEST_TIMEOUT_MS = 30_000
+
 class ApiService {
   private settings: KioskSettings | null = null
   private baseUrl: string = ''
@@ -33,11 +35,20 @@ class ApiService {
   private async request<T>(endpoint: string): Promise<T> {
     const url = `${this.baseUrl}/api${endpoint}`
 
-    const response = await fetch(url, {
-      headers: {
-        'Content-Type': 'application/json',
-      },
-    })
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), CMS_REQUEST_TIMEOUT_MS)
+
+    let response: Response
+    try {
+      // Resolves once headers arrive (not when the body is fully downloaded).
+      // The timer is cleared here so large body downloads are not interrupted.
+      response = await fetch(url, {
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+      })
+    } finally {
+      clearTimeout(timer)
+    }
 
     if (!response.ok) {
       throw new Error(`API error: ${response.status} ${response.statusText}`)
