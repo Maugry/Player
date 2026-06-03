@@ -5,8 +5,13 @@ import fs from 'node:fs'
 import https from 'node:https'
 import http from 'node:http'
 import { Readable } from 'node:stream'
+import log from 'electron-log/main'
 import { isDownloadComplete } from './download-validate'
 import { resolveRange, getMimeTypeFromFilePath } from './media-range'
+
+log.initialize({ preload: true })
+log.transports.file.maxSize = 5 * 1024 * 1024 // 5 MB
+log.transports.file.format = '{y}-{m}-{d} {h}:{i}:{s}.{ms} [{level}] {text}'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -144,10 +149,10 @@ ipcMain.handle('download-media', async (event, url: string, id: string, mimeType
   if (fs.existsSync(filePath)) {
     const info = getFileInfo(filePath)
     if (info.exists && info.size > 0) {
-      console.log('[Main] Reusing existing cached media file:', filePath)
+      log.info('[Main] Reusing existing cached media file:', filePath)
       return filePath
     }
-    console.warn('[Main] Removing empty cached media before redownload:', filePath)
+    log.warn('[Main] Removing empty cached media before redownload:', filePath)
     removeFileIfExists(filePath)
   }
 
@@ -163,7 +168,7 @@ ipcMain.handle('download-media', async (event, url: string, id: string, mimeType
       try {
         removeFileIfExists(filePath)
       } catch (cleanupError) {
-        console.warn('[Main] Failed to remove partial media file:', cleanupError)
+        log.warn('[Main] Failed to remove partial media file:', cleanupError)
       }
       reject(error)
     }
@@ -268,23 +273,23 @@ ipcMain.handle('load-settings', async () => {
   for (const settingsPath of settingsPaths) {
     if (fs.existsSync(settingsPath)) {
       try {
-        console.log('[Main] Loading settings from:', settingsPath)
+        log.info('[Main] Loading settings from:', settingsPath)
         const data = fs.readFileSync(settingsPath, 'utf-8')
         return JSON.parse(data)
       } catch (err) {
-        console.error('[Main] Failed to load settings from', settingsPath, err)
+        log.error('[Main] Failed to load settings from', settingsPath, err)
       }
     }
   }
 
-  console.log('[Main] No settings file found, using defaults')
+  log.info('[Main] No settings file found, using defaults')
   // Return null to use defaults from renderer
   return null
 })
 
 // Power controls
 ipcMain.handle('system-shutdown', async () => {
-  console.log('[Main] Shutdown requested')
+  log.info('[Main] Shutdown requested')
   const { exec } = await import('node:child_process')
 
   // Platform-specific shutdown command
@@ -293,7 +298,7 @@ ipcMain.handle('system-shutdown', async () => {
 
   exec(command, (error) => {
     if (error) {
-      console.error('[Main] Shutdown failed:', error)
+      log.error('[Main] Shutdown failed:', error)
     }
   })
 
@@ -302,7 +307,7 @@ ipcMain.handle('system-shutdown', async () => {
 })
 
 ipcMain.handle('system-reboot', async () => {
-  console.log('[Main] Reboot requested')
+  log.info('[Main] Reboot requested')
   const { exec } = await import('node:child_process')
 
   // Platform-specific reboot command
@@ -311,7 +316,7 @@ ipcMain.handle('system-reboot', async () => {
 
   exec(command, (error) => {
     if (error) {
-      console.error('[Main] Reboot failed:', error)
+      log.error('[Main] Reboot failed:', error)
     }
   })
 
@@ -320,7 +325,7 @@ ipcMain.handle('system-reboot', async () => {
 })
 
 ipcMain.handle('quit-app', () => {
-  console.log('[Main] App quit requested')
+  log.info('[Main] App quit requested')
   app.quit()
 })
 
@@ -353,7 +358,7 @@ app.whenReady().then(() => {
       const relativePath = path.relative(MEDIA_CACHE_DIR, filePath)
       const isSafe = relativePath && !relativePath.startsWith('..') && !path.isAbsolute(relativePath)
       if (!isSafe) {
-        console.error('[Protocol] Forbidden path:', filePath)
+        log.error('[Protocol] Forbidden path:', filePath)
         return new Response('Forbidden', { status: 403, headers: { 'content-type': 'text/plain' } })
       }
 
@@ -363,7 +368,7 @@ app.whenReady().then(() => {
         if (!stats.isFile()) throw new Error('NOT_A_FILE')
         fileSize = stats.size
       } catch {
-        console.error('[Protocol] File not found:', filePath)
+        log.error('[Protocol] File not found:', filePath)
         return new Response('Not Found', { status: 404, headers: { 'content-type': 'text/plain' } })
       }
 
