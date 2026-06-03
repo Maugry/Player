@@ -202,8 +202,9 @@ ipcMain.handle('download-media', async (event, url: string, id: string, mimeType
     removeFileIfExists(filePath)
   }
 
+  const MAX_REDIRECTS = 5
+
   return new Promise<string>((resolve, reject) => {
-    const proto = url.startsWith('https') ? https : http
     let settled = false
     let fileStream: fs.WriteStream | null = null
 
@@ -219,58 +220,74 @@ ipcMain.handle('download-media', async (event, url: string, id: string, mimeType
       reject(error)
     }
 
-    const request = proto.get(url, (response) => {
-      if (response.statusCode === 301 || response.statusCode === 302) {
-        const redirectUrl = response.headers.location
-        if (redirectUrl) {
-          ipcMain.emit('download-media', event, redirectUrl, id, mimeType)
-          return
-        }
-      }
+    // Issue a GET and follow redirects inline so the outer Promise always
+    // settles (a previous version emitted on a `handle`-registered channel,
+    // which silently no-ops and hung the download). Redirect/non-200 responses
+    // are drained so their sockets are freed.
+    const doGet = (currentUrl: string, redirectsLeft: number) => {
+      const proto = currentUrl.startsWith('https') ? https : http
 
-      if (response.statusCode !== 200) {
-        failDownload(new Error(`HTTP ${response.statusCode}`))
-        return
-      }
+      const request = proto.get(currentUrl, (response) => {
+        const status = response.statusCode ?? 0
 
-      const totalSize = parseInt(response.headers['content-length'] || '0', 10)
-      let downloadedSize = 0
-      fileStream = fs.createWriteStream(filePath)
-
-      response.on('data', (chunk) => {
-        downloadedSize += chunk.length
-        if (totalSize > 0) {
-          const percent = Math.round((downloadedSize / totalSize) * 100)
-          event.sender.send('download-progress', { id, percent })
-        }
-      })
-
-      response.on('aborted', () => failDownload(new Error('Download aborted')))
-      response.pipe(fileStream)
-
-      fileStream.on('finish', () => {
-        fileStream!.close((closeErr) => {
-          if (closeErr) { failDownload(closeErr); return }
-          const info = getFileInfo(filePath)
-          if (!isDownloadComplete({ totalSize, actualSize: info.size })) {
-            failDownload(new Error(
-              `Downloaded file invalid: expected ${totalSize}, got ${info.size}`))
+        if (status >= 300 && status < 400 && response.headers.location) {
+          response.resume() // drain to free the socket
+          if (redirectsLeft <= 0) {
+            failDownload(new Error('Too many redirects'))
             return
           }
-          if (settled) return
-          settled = true
-          resolve(filePath)
+          const next = new URL(response.headers.location, currentUrl).toString()
+          doGet(next, redirectsLeft - 1)
+          return
+        }
+
+        if (status !== 200) {
+          response.resume()
+          failDownload(new Error(`HTTP ${status}`))
+          return
+        }
+
+        const totalSize = parseInt(response.headers['content-length'] || '0', 10)
+        let downloadedSize = 0
+        fileStream = fs.createWriteStream(filePath)
+
+        response.on('data', (chunk) => {
+          downloadedSize += chunk.length
+          if (totalSize > 0) {
+            const percent = Math.round((downloadedSize / totalSize) * 100)
+            event.sender.send('download-progress', { id, percent })
+          }
         })
+
+        response.on('aborted', () => failDownload(new Error('Download aborted')))
+        response.pipe(fileStream)
+
+        fileStream.on('finish', () => {
+          fileStream!.close((closeErr) => {
+            if (closeErr) { failDownload(closeErr); return }
+            const info = getFileInfo(filePath)
+            if (!isDownloadComplete({ totalSize, actualSize: info.size })) {
+              failDownload(new Error(
+                `Downloaded file invalid: expected ${totalSize}, got ${info.size}`))
+              return
+            }
+            if (settled) return
+            settled = true
+            resolve(filePath)
+          })
+        })
+
+        fileStream.on('error', (err) => failDownload(err))
       })
 
-      fileStream.on('error', (err) => failDownload(err))
-    })
+      request.on('error', (err) => failDownload(err))
+      request.setTimeout(30000, () => {
+        request.destroy()
+        failDownload(new Error('Download timeout'))
+      })
+    }
 
-    request.on('error', (err) => failDownload(err))
-    request.setTimeout(30000, () => {
-      request.destroy()
-      failDownload(new Error('Download timeout'))
-    })
+    doGet(url, MAX_REDIRECTS)
   })
 })
 
