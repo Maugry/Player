@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, protocol, session } from 'electron'
+import { app, BrowserWindow, ipcMain, protocol, session, screen } from 'electron'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import fs from 'node:fs'
@@ -52,6 +52,18 @@ function createWindow() {
     webPreferences: {
       preload: path.join(__dirname, 'preload.mjs'),
     },
+  })
+
+  const syncWindowToPrimaryDisplay = () => {
+    const display = screen.getPrimaryDisplay()
+    win?.setBounds(display.bounds)
+  }
+  syncWindowToPrimaryDisplay()
+  screen.on('display-metrics-changed', syncWindowToPrimaryDisplay)
+
+  win.on('closed', () => {
+    screen.off('display-metrics-changed', syncWindowToPrimaryDisplay)
+    win = null
   })
 
   // Test active push message to Renderer-process.
