@@ -5,6 +5,7 @@ import fs from 'node:fs'
 import https from 'node:https'
 import http from 'node:http'
 import { Readable } from 'node:stream'
+import { createHash } from 'node:crypto'
 import log from 'electron-log/main'
 import { isDownloadComplete } from './download-validate'
 import { resolveRange, getMimeTypeFromFilePath } from './media-range'
@@ -14,6 +15,13 @@ log.transports.file.maxSize = 5 * 1024 * 1024 // 5 MB
 log.transports.file.format = '{y}-{m}-{d} {h}:{i}:{s}.{ms} [{level}] {text}'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
+
+// Per-install AppData isolation: different install folders get different
+// userData dirs (no DB/cache lock contention); the same folder across updater
+// upgrades keeps its dir (continuity). Must run before MEDIA_CACHE_DIR below.
+const exeDir = path.dirname(app.getPath('exe'))
+const dirHash = createHash('md5').update(exeDir).digest('hex').slice(0, 8)
+app.setPath('userData', path.join(app.getPath('appData'), `umka-player-${dirHash}`))
 
 // Media cache directory
 const MEDIA_CACHE_DIR = path.join(app.getPath('userData'), 'media-cache')
