@@ -123,6 +123,8 @@ class MqttService {
       reconnectPeriod: 5000,
       connectTimeout: 3000,
       clean: true,
+      username: settings.mqttUsername || undefined,
+      password: settings.mqttPassword || undefined,
       // Supervisor-emulation LWT: on ungraceful disconnect the broker publishes
       // an `offline` status to the retained system/heartbeat topic (STANDARD
       // §Supervisor topics). A real Sentinel would own this.

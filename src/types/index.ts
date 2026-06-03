@@ -35,6 +35,8 @@ export interface KioskSettings {
   kioskSlug: string
   serverUrl: string
   mqttUrl: string
+  mqttUsername?: string
+  mqttPassword?: string
   museumId: string
   mode: KioskMode
   profile?: KioskProfile
