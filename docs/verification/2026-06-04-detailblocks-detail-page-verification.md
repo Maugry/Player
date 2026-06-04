@@ -2,18 +2,17 @@
 
 Verifies the reference Player renders the new CMS content model's catalog detail
 pages: `detailBlocks` (image / text / video), the `showcaseVideo` hero, and the
-`subtitle` field. See the design + plan under `docs/superpowers/` in the PM repo.
+`subtitle` field.
 
 ## Setup
 
-Dev session points `kiosk-settings.json` (in the Electron dist dir) at the test
-browse kiosk:
+Point `kiosk-settings.json` (in the Electron dist dir) at a browse kiosk whose
+content package has menu items with `detailBlocks`:
 
-- CMS `http://host.example.local:40000`, MQTT `ws://host.example.local:49001`
-- Kiosk slug `browse-kiosk` (ID 33), content package 84, MQTT auth `kiosk` / `REDACTED-CREDENTIAL`
+- CMS `http://<cms-host>:40000`, MQTT `ws://<cms-host>:49001`
+- A browse kiosk slug, its content package, and MQTT auth (`<mqtt-user>` / `<mqtt-password>`)
 
-Launch: `pnpm dev` from `prototype/player` (requires the test contour reachable;
-VPN if off-network).
+Launch: `pnpm dev` from `prototype/player` (requires the CMS/MQTT host reachable).
 
 ## Checks
 

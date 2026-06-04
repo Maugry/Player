@@ -9,7 +9,7 @@ related:
 
 # Robustness Port — Manual Verification Guide
 
-This guide verifies the field-hardening ported from the production production client. The
+This guide verifies the field-hardening ported from a battle-tested production client. The
 automated unit tests cover the pure logic (timeout, download-completion check, range
 resolution, cache validation, dedup, concurrency, staleness, idle suppression, MQTT auth).
 The steps below cover the Electron-runtime behaviour that has no unit harness.

@@ -1,8 +1,8 @@
 {
   "kioskId": "kiosk-demo",
   "kioskSlug": "kiosk-1-1",
-  "serverUrl": "http://host.example.local:40000",
-  "mqttUrl": "ws://host.example.local:49001",
+  "serverUrl": "http://cms.example.local:40000",
+  "mqttUrl": "ws://cms.example.local:49001",
   "museumId": "museum",
   "mode": "browse",
   "display": {
