@@ -505,7 +505,12 @@ class StorageService {
       for (const item of items) {
         add(item.thumbnail)
         add(item.video)
+        add(item.showcaseVideo)
         item.showcaseItems?.forEach(si => add(si.image))
+        item.detailBlocks?.forEach(block => {
+          if (block.blockType === 'image-block') add(block.image)
+          else if (block.blockType === 'video-block') add(block.video)
+        })
         addMenu(item.submenuItems)
       }
     }
