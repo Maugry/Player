@@ -393,7 +393,13 @@ class PlayerService {
 
     switch (item.contentType) {
       case 'video':
-        if (item.video) {
+        if (item.detailBlocks?.length) {
+          // A video item that also carries detail blocks opens the detail page
+          // (idle) rather than auto-playing — the blocks are the page content.
+          this.state.currentContent = item
+          this.state.appState = 'content'
+          this.state.playbackState = 'idle'
+        } else if (item.video) {
           this.state.currentContent = item
           this.state.appState = 'content'
           this.state.playbackState = 'playing'
@@ -403,19 +409,28 @@ class PlayerService {
         break
 
       case 'article':
-        this.state.currentContent = item
-        this.state.appState = 'content'
-        this.state.playbackState = 'idle'
+        // Guard like the video case: an item with no renderable payload must
+        // not enter the 'content' state. The render layer has no branch for an
+        // empty article, so it would fall through to a fallback screensaver and
+        // strand the UI. Leaving appState on 'menu' keeps the kiosk usable.
+        if (item.article) {
+          this.state.currentContent = item
+          this.state.appState = 'content'
+          this.state.playbackState = 'idle'
+          this.state.showcaseOpen = false
+        }
         this.state.currentLeafId = item.id
-        this.state.showcaseOpen = false
         break
 
       case 'showcase':
+        // Always open the detail page. The DetailPage renders showcaseVideo,
+        // detailBlocks, or legacy showcaseItems, and falls back to a title-only
+        // "no content" state — so an empty showcase no longer strands the UI.
         this.state.currentContent = item
         this.state.currentIndex = 0
         this.state.appState = 'content'
-        this.state.currentLeafId = item.id
         this.state.showcaseOpen = true
+        this.state.currentLeafId = item.id
         break
 
       case 'submenu':
