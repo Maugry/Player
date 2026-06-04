@@ -9,7 +9,7 @@ import {
   BrowseMenu,
   VideoPlayer,
   ArticleViewer,
-  ShowcaseViewer,
+  DetailPage,
   ErrorScreen,
   LoadingScreen,
 } from '@/screens'
@@ -427,6 +427,18 @@ function App() {
 
     const content = playerState.currentContent as MenuItem
 
+    // New CMS model: showcase items and any item carrying detailBlocks render a
+    // detail page. A plain video item (no detailBlocks) still plays directly.
+    if (content.contentType === 'showcase' || content.detailBlocks?.length) {
+      return (
+        <DetailPage
+          item={content}
+          onBack={handleBack}
+          onHome={handleHome}
+        />
+      )
+    }
+
     // Video content (browse mode)
     if (content.contentType === 'video' && content.video) {
       return (
@@ -461,19 +473,9 @@ function App() {
       )
     }
 
-    // Showcase/gallery
-    if (content.contentType === 'showcase' && content.showcaseItems?.length) {
-      return (
-        <ShowcaseViewer
-          items={content.showcaseItems}
-          currentIndex={playerState.currentIndex}
-          onNext={() => playerService.next()}
-          onPrev={() => playerService.previous()}
-          onBack={handleBack}
-          onHome={handleHome}
-        />
-      )
-    }
+    // Showcase items (contentType === 'showcase') and any item with
+    // detailBlocks are handled by the DetailPage branch above; its legacy
+    // showcaseItems fallback supersedes the old ShowcaseViewer.
   }
 
   // Fallback to screensaver
