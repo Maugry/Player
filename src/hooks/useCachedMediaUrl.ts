@@ -21,7 +21,9 @@ export function useCachedMediaUrl(media?: MediaItem | null): string | null {
       .then(resolved => { if (!cancelled) setUrl(resolved) })
       .catch(() => { if (!cancelled) setUrl(media.url) })
     return () => { cancelled = true }
-  }, [media?.id, media?.url])
+    // `media` is a stable reference from cached package state (not recreated
+    // per render), so depending on the object resolves once per media item.
+  }, [media])
 
   return url
 }
