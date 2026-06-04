@@ -14,6 +14,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import type { KioskSettings, ContentPackage, MediaItem, Article } from '@/types'
+import { lexicalToPlainText } from '@/lib/lexical'
 
 const CMS_REQUEST_TIMEOUT_MS = 30_000
 
@@ -174,21 +175,52 @@ class ApiService {
   private transformMenuItems(items: any[]): any[] {
     return items.map((item: any) => ({
       id: item.id || String(Math.random()),
-      title: item.title,
-      description: item.description,
+      title: lexicalToPlainText(item.title),
+      description: lexicalToPlainText(item.description) || undefined,
+      subtitle: lexicalToPlainText(item.subtitle) || undefined,
       thumbnail: item.thumbnail ? this.transformMedia(item.thumbnail) : undefined,
       contentType: item.contentType,
       video: item.video ? this.transformMedia(item.video) : undefined,
       article: item.article,
+      showcaseVideo: item.showcaseVideo ? this.transformMedia(item.showcaseVideo) : undefined,
+      detailBlocks: Array.isArray(item.detailBlocks)
+        ? item.detailBlocks.map((b: any) => this.transformDetailBlock(b)).filter(Boolean)
+        : undefined,
       showcaseItems: item.showcaseItems?.map((si: any) => ({
         id: si.id || String(Math.random()),
-        title: si.title,
-        description: si.description,
+        title: lexicalToPlainText(si.title),
+        description: lexicalToPlainText(si.description) || undefined,
         image: this.transformMedia(si.image),
       })),
       submenuItems: item.submenuItems ? this.transformMenuItems(item.submenuItems) : undefined,
       guideOnly: item.guideOnly || false,
     }))
+  }
+
+  /**
+   * Transform one CMS detail block to our DetailBlock union.
+   * Unknown block types return null (filtered out by the caller) so new CMS
+   * block types never crash an older Player.
+   */
+  private transformDetailBlock(block: any): any {
+    switch (block?.blockType) {
+      case 'image-block':
+        return {
+          blockType: 'image-block',
+          image: block.image ? this.transformMedia(block.image) : undefined,
+          caption: block.caption,
+        }
+      case 'text-block':
+        return { blockType: 'text-block', richText: block.richText ?? '' }
+      case 'video-block':
+        return {
+          blockType: 'video-block',
+          video: block.video ? this.transformMedia(block.video) : undefined,
+          title: block.title,
+        }
+      default:
+        return null
+    }
   }
 
   /**

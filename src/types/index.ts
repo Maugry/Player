@@ -66,15 +66,23 @@ export interface Article {
   coverImage?: MediaItem
 }
 
+export type DetailBlock =
+  | { blockType: 'image-block'; image?: MediaItem; caption?: string }
+  | { blockType: 'text-block'; richText: string }
+  | { blockType: 'video-block'; video?: MediaItem; title?: string }
+
 export interface MenuItem {
   id: string
   title: string
   description?: string
+  subtitle?: string
   thumbnail?: MediaItem
   contentType: 'video' | 'article' | 'showcase' | 'submenu'
   video?: MediaItem
   article?: Article
   showcaseItems?: ShowcaseItem[]
+  showcaseVideo?: MediaItem
+  detailBlocks?: DetailBlock[]
   submenuItems?: MenuItem[]
   guideOnly?: boolean
 }
