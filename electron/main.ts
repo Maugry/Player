@@ -207,10 +207,16 @@ ipcMain.handle('download-media', async (event, url: string, id: string, mimeType
   return new Promise<string>((resolve, reject) => {
     let settled = false
     let fileStream: fs.WriteStream | null = null
+    let activeRequest: http.ClientRequest | null = null
+
+    const cleanupSenderListener = () => {
+      event.sender.removeListener('destroyed', onSenderGone)
+    }
 
     const failDownload = (error: Error) => {
       if (settled) return
       settled = true
+      cleanupSenderListener()
       if (fileStream && !fileStream.destroyed) fileStream.destroy()
       try {
         removeFileIfExists(filePath)
@@ -219,6 +225,17 @@ ipcMain.handle('download-media', async (event, url: string, id: string, mimeType
       }
       reject(error)
     }
+
+    // If the requesting renderer/window goes away mid-download, its progress
+    // channel is dead and the bytes are wasted. Abort the in-flight request and
+    // route through failDownload so the partial file is cleaned up like any
+    // other failure — instead of streaming on and throwing when we try to send
+    // progress to a destroyed WebContents.
+    const onSenderGone = () => {
+      activeRequest?.destroy()
+      failDownload(new Error('Renderer closed during download'))
+    }
+    event.sender.once('destroyed', onSenderGone)
 
     // Issue a GET and follow redirects inline so the outer Promise always
     // settles (a previous version emitted on a `handle`-registered channel,
@@ -253,7 +270,10 @@ ipcMain.handle('download-media', async (event, url: string, id: string, mimeType
 
         response.on('data', (chunk) => {
           downloadedSize += chunk.length
-          if (totalSize > 0) {
+          // Guard the send: the window may have closed mid-stream, leaving a
+          // destroyed WebContents that throws on .send(). onSenderGone also
+          // aborts us, but a race can deliver one more chunk first.
+          if (totalSize > 0 && !event.sender.isDestroyed()) {
             const percent = Math.round((downloadedSize / totalSize) * 100)
             event.sender.send('download-progress', { id, percent })
           }
@@ -273,6 +293,7 @@ ipcMain.handle('download-media', async (event, url: string, id: string, mimeType
             }
             if (settled) return
             settled = true
+            cleanupSenderListener()
             resolve(filePath)
           })
         })
@@ -280,6 +301,7 @@ ipcMain.handle('download-media', async (event, url: string, id: string, mimeType
         fileStream.on('error', (err) => failDownload(err))
       })
 
+      activeRequest = request
       request.on('error', (err) => failDownload(err))
       request.setTimeout(30000, () => {
         request.destroy()
