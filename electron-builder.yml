@@ -16,9 +16,10 @@ win:
   target:
     - target: portable
       arch: x64
-  # Skip code signing for demo builds
-  sign: false
-  signDlls: false
+  # Demo builds are unsigned: with no certificate configured electron-builder
+  # skips signing by default. (The old `sign`/`signDlls` keys were removed in
+  # electron-builder 26 and now fail config validation.)
+  forceCodeSigning: false
 
 # Include sample settings file in resources
 extraResources:
