@@ -157,8 +157,11 @@ class ApiService {
           : data.screensaver.media
             ? [this.transformMedia(data.screensaver.media)]
             : undefined,
-        title: data.screensaver.title,
-        subtitle: data.screensaver.subtitle,
+        // title/subtitle are Lexical richText in the CMS (see Physical-Model-Payload.md);
+        // the Player renders titles as plain strings, so flatten — otherwise React throws
+        // "Objects are not valid as a React child" and the screensaver goes white.
+        title: lexicalToPlainText(data.screensaver.title) || undefined,
+        subtitle: lexicalToPlainText(data.screensaver.subtitle) || undefined,
         showStartButton: data.screensaver.showStartButton ?? true,
         startButtonText: data.screensaver.startButtonText,
         idleTimeoutSeconds: data.screensaver.idleTimeoutSeconds,
@@ -180,7 +183,10 @@ class ApiService {
       subtitle: lexicalToPlainText(item.subtitle) || undefined,
       thumbnail: item.thumbnail ? this.transformMedia(item.thumbnail) : undefined,
       contentType: item.contentType,
-      video: item.video ? this.transformMedia(item.video) : undefined,
+      // `video` is a `relationship hasMany` field in the CMS, so it arrives as an
+      // array; the browse Player renders a single <video>, so take the first item.
+      // (Defensive: also accept a bare object.) Empty array → undefined.
+      video: this.firstMediaItem(item.video),
       article: item.article,
       showcaseVideo: item.showcaseVideo ? this.transformMedia(item.showcaseVideo) : undefined,
       detailBlocks: Array.isArray(item.detailBlocks)
@@ -226,6 +232,16 @@ class ApiService {
   /**
    * Transform CMS media to our type
    */
+  /**
+   * Normalise a media field that may be a `hasMany` array, a single object, or
+   * absent, into a single MediaItem (or undefined). Used for menu-item `video`,
+   * which is a `relationship hasMany` field but rendered as one <video>.
+   */
+  private firstMediaItem(value: any): MediaItem | undefined {
+    const v = Array.isArray(value) ? value[0] : value
+    return v ? this.transformMedia(v) : undefined
+  }
+
   private transformMedia(data: any): MediaItem {
     if (typeof data === 'string') {
       return { id: data, url: '', mimeType: '' }
