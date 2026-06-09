@@ -46,6 +46,8 @@ export function Screensaver({ onWake, screensaver, logoUrl }: ScreensaverProps) 
     return () => clearInterval(interval)
   }, [mediaItems.length])
 
+  const mountedRef = useRef(true)
+
   // Handle dismiss with optional fade-out transition
   const handleWake = useCallback(() => {
     if (dismissing) return
@@ -55,15 +57,24 @@ export function Screensaver({ onWake, screensaver, logoUrl }: ScreensaverProps) 
       setDismissing(true)
       dismissTimeoutRef.current = setTimeout(() => {
         onWake()
+        // If the wake did not navigate away (e.g. loop/custom mode with no content
+        // to show), this component is still mounted — fade back in instead of
+        // leaving a blank screen. When the wake does change the view, the unmount
+        // makes this a no-op (guarded by mountedRef).
+        if (mountedRef.current) setDismissing(false)
       }, 500)
     } else {
       onWake()
     }
   }, [dismissing, screensaver?.showTransitionAnimation, onWake])
 
-  // Cleanup timeout on unmount
+  // Track mounted state. Set in the effect body (not just useRef's initial value)
+  // so it resets to true on every mount — under React StrictMode the effect is
+  // cleaned up and re-run, which would otherwise leave the ref stuck at false.
   useEffect(() => {
+    mountedRef.current = true
     return () => {
+      mountedRef.current = false
       if (dismissTimeoutRef.current) {
         clearTimeout(dismissTimeoutRef.current)
       }

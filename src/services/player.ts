@@ -134,12 +134,18 @@ class PlayerService {
       }
 
       case 'loop': {
-        this.state.appState = 'content'
-        this.state.playbackState = 'playing'
         const filtered = filterGuideOnlyMedia(contentPackage.playlist?.items || [])
         if (filtered.length) {
+          this.state.appState = 'content'
+          this.state.playbackState = 'playing'
           this.state.currentContent = filtered[0]
           this.state.currentIndex = 0
+        } else {
+          // No playable playlist — e.g. a browse package forced into loop mode by a
+          // mismatched mode command. Idle on the screensaver instead of a phantom
+          // 'content' state with null currentContent, which renders blank and
+          // dead-ends the next tap.
+          this.state.appState = 'screensaver'
         }
         break
       }

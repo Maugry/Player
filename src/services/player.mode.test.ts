@@ -38,4 +38,16 @@ describe('mode collapse', () => {
     playerService.init({ id: 'p', name: 'p', mode: 'custom' }, 'custom')
     expect(playerService.getState().mode).toBe('custom')
   })
+
+  it('loop with no playable playlist: idles on screensaver, not a phantom content state', () => {
+    // A browse package forced into loop mode (e.g. a mismatched mode command) has
+    // no playlist.items. The player must not land on appState='content' with a
+    // null currentContent — that renders the screensaver fallback and dead-ends
+    // on the next tap (white screen). It must idle cleanly on the screensaver.
+    playerService.init(browsePkg, 'loop')
+    const s = playerService.getState()
+    expect(s.mode).toBe('loop')
+    expect(s.appState).toBe('screensaver')
+    expect(s.currentContent).toBeNull()
+  })
 })
