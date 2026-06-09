@@ -55,7 +55,10 @@ describe('parseCommand', () => {
     expect(cmd('app', JSON.stringify({ action: 'sync' }))).toEqual({ action: 'sync' })
     expect(cmd('app', JSON.stringify({ action: 'mode', value: 'loop' }))).toEqual({ action: 'mode', value: 'loop' })
     expect(cmd('app', JSON.stringify({ action: 'quit' }))).toEqual({ action: 'quit' })
-    expect(cmd('app', JSON.stringify({ action: 'restart' }))).toEqual({ action: 'restart' })
+    // `restart` on commands/app is a Supervisor command (bare string), NOT a
+    // Player JSON command. Per the Standard, the Player's app union is only
+    // sync/mode/quit, so JSON {action:'restart'} is not a valid Player command.
+    expect(cmd('app', JSON.stringify({ action: 'restart' }))).toBeNull()
   })
   it('app: bare-string Supervisor payloads ignored', () => {
     expect(cmd('app', 'start')).toBeNull()

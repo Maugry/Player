@@ -1,18 +1,34 @@
 /**
  * Kiosk Types — Umka Kiosk Standard v1.26.5.1
+ *
+ * Protocol/wire types are sourced from @umka/protocol (the single source of
+ * truth that these local types originally seeded). Player-only UI/view types
+ * and player-only extensions to protocol shapes are defined locally below.
  */
 
-// Wire operating modes. Configurations (Continuous/Interactive/Triggered/
-// Audio/Projector/Catalog/Showcase) are realised via `profile` + content
-// package, NOT as mode values.
-export type KioskMode = 'loop' | 'browse' | 'custom'
+import type {
+  MediaItem as ProtocolMediaItem,
+  MenuItem as ProtocolMenuItem,
+  ContentPackage as ProtocolContentPackage,
+} from '@umka/protocol'
 
-// Rendering hint only — never published on the wire.
+// Protocol types + enums sourced from the package. KioskMode/PlaybackState are
+// re-exported as values (zod enums) as well as types.
+export {
+  KioskMode,
+  PlaybackState,
+  type KioskStatus,
+  type KioskHeartbeat,
+} from '@umka/protocol'
+
+import type { KioskMode } from '@umka/protocol'
+
+// Rendering hint only — never published on the wire. Player-only.
 export type KioskProfile =
   | 'continuous' | 'interactive' | 'triggered'
   | 'audio' | 'projector' | 'catalog' | 'showcase'
 
-export type PlaybackState = 'idle' | 'playing' | 'paused' | 'loading' | 'error'
+// Player-only app/view state (not protocol).
 export type AppState = 'loading' | 'screensaver' | 'menu' | 'content' | 'error'
 
 // Reserved error codes (STANDARD §Status topics). The Player currently emits
@@ -46,14 +62,11 @@ export interface KioskSettings {
   contentPackageId?: string
 }
 
-export interface MediaItem {
-  id: string
-  url: string
-  title?: string
-  mimeType: string
-  durationSeconds?: number
-  thumbnail?: string
-  guideOnly?: boolean
+// MediaItem extends the protocol shape with player-only cache fields
+// (checksum/size) used by the offline media cache (storage.ts). These are not
+// part of the wire protocol — they come from CMS filesize/checksum and never
+// travel as protocol payloads.
+export type MediaItem = ProtocolMediaItem & {
   checksum?: string
   size?: number  // File size in bytes (CMS filesize); used for cache-skip
 }
@@ -71,22 +84,22 @@ export type DetailBlock =
   | { blockType: 'text-block'; richText: string }
   | { blockType: 'video-block'; video?: MediaItem; title?: string }
 
-export interface MenuItem {
-  id: string
-  title: string
-  description?: string
-  subtitle?: string
+// MenuItem extends the protocol shape with player-only CMS/UI fields
+// (article, showcaseVideo, detailBlocks) and re-types media/recursion to the
+// player-local MediaItem/MenuItem so cache fields propagate. The protocol
+// MenuItem is recursive, so the extension is declared structurally here.
+export interface MenuItem extends Omit<ProtocolMenuItem, 'thumbnail' | 'video' | 'showcaseItems' | 'submenuItems'> {
   thumbnail?: MediaItem
-  contentType: 'video' | 'article' | 'showcase' | 'submenu'
   video?: MediaItem
   article?: Article
   showcaseItems?: ShowcaseItem[]
   showcaseVideo?: MediaItem
   detailBlocks?: DetailBlock[]
   submenuItems?: MenuItem[]
-  guideOnly?: boolean
 }
 
+// ShowcaseItem mirrors the protocol shape but uses the player-local MediaItem
+// (with cache fields) and keeps title required, as the player always provides it.
 export interface ShowcaseItem {
   id: string
   title: string
@@ -94,10 +107,13 @@ export interface ShowcaseItem {
   image: MediaItem
 }
 
-export interface ContentPackage {
-  id: string
-  name: string
-  version?: string
+// ContentPackage extends the protocol shape: mode is required for the player
+// (always resolved at load), media/menu re-typed to player-local MediaItem/
+// MenuItem, and the screensaver block carries player-only render hints.
+export type ContentPackage = Omit<
+  ProtocolContentPackage,
+  'mode' | 'menuItems' | 'playlist' | 'showcaseItems' | 'guideContent' | 'screensaver'
+> & {
   mode: KioskMode
   menuItems?: MenuItem[]
   playlist?: { items: MediaItem[]; loopPlaylist: boolean }
@@ -136,37 +152,11 @@ export interface KioskCommand {
   trigger?: TriggerEnvelope
 }
 
+// Player-only navigation view state, embedded in the wire KioskStatus payload.
 export interface KioskNavigation {
   nodeId: string | null
   path?: string[]
   showcaseOpen?: boolean
 }
 
-export interface KioskStatus {
-  kioskId: string
-  state: PlaybackState
-  mode: KioskMode
-  volume: number
-  locale: string
-  currentContent?: {
-    type: string
-    id: string
-    title?: string
-    position?: number
-    duration?: number
-  }
-  navigation?: KioskNavigation
-  screensaverActive?: boolean
-  timestamp: string
-  version: string
-  uptime: number
-  error: KioskError | null
-  triggerEnded?: boolean
-}
-
-export interface KioskHeartbeat {
-  kioskId: string
-  timestamp: string
-  version: string
-  uptime: number
-}
+// KioskStatus and KioskHeartbeat are sourced from @umka/protocol (re-exported above).

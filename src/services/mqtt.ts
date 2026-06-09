@@ -9,6 +9,7 @@
  */
 
 import mqtt, { MqttClient, IClientOptions } from 'mqtt'
+import { topics, parseAppCommand } from '@umka/protocol'
 import { APP_VERSION } from '@/version'
 import type { KioskCommand, KioskStatus, KioskHeartbeat, KioskSettings } from '@/types'
 
@@ -79,16 +80,15 @@ export function parseCommand(leaf: string, raw: string): KioskCommand | null {
       }
     }
     case 'app': {
-      let parsed: unknown
-      try { parsed = JSON.parse(raw) } catch { return null } // bare-string => Supervisor's, ignore
-      if (!parsed || typeof parsed !== 'object') return null
-      const d = parsed as Record<string, unknown>
-      if (typeof d.action !== 'string') return null
-      switch (d.action) {
+      // commands/app carries two consumers' payloads disambiguated by shape:
+      // Player reads JSON {action}; Supervisor reads a bare string. Act only on
+      // the Player branch (target === 'player'); ignore Supervisor commands.
+      const r = parseAppCommand(raw)
+      if (!r.ok || r.target !== 'player') return null
+      switch (r.data.action) {
         case 'sync': return { action: 'sync' }
         case 'quit': return { action: 'quit' }
-        case 'restart': return { action: 'restart' }
-        case 'mode': return { action: 'mode', value: d.value }
+        case 'mode': return { action: 'mode', value: r.data.value }
         default: return null
       }
     }
@@ -106,10 +106,10 @@ class MqttService {
   private reconnectAttempts = 0
 
   /**
-   * Get the base topic for this kiosk
+   * Get this kiosk's slug for topic builders.
    */
-  private getBaseTopic(): string {
-    return `umka/kiosks/${this.settings?.kioskSlug}`
+  private get slug(): string {
+    return this.settings?.kioskSlug ?? ''
   }
 
   /**
@@ -129,7 +129,7 @@ class MqttService {
       // an `offline` status to the retained system/heartbeat topic (STANDARD
       // §Supervisor topics). A real Sentinel would own this.
       will: {
-        topic: `umka/kiosks/${settings.kioskSlug}/system/heartbeat`,
+        topic: topics.systemHeartbeat(settings.kioskSlug),
         payload: JSON.stringify({
           kioskId: settings.kioskId, status: 'offline', connectedAt: new Date().toISOString(),
         }),
@@ -183,16 +183,16 @@ class MqttService {
   private subscribeToCommands(): void {
     if (!this.client || !this.settings) return
 
-    const baseTopic = this.getBaseTopic()
+    const slug = this.slug
 
     // Subscribe to all command subtopics
     const commandTopics = [
-      `${baseTopic}/commands/power`,
-      `${baseTopic}/commands/app`,
-      `${baseTopic}/commands/playback`,
-      `${baseTopic}/commands/volume`,
-      `${baseTopic}/commands/locale`,
-      `${baseTopic}/commands/loop`,
+      topics.commandsPower(slug),
+      topics.commandsApp(slug),
+      topics.commandsPlayback(slug),
+      topics.commandsVolume(slug),
+      topics.commandsLocale(slug),
+      topics.commandsLoop(slug),
     ]
 
     commandTopics.forEach(topic => {
@@ -238,7 +238,7 @@ class MqttService {
    */
   publishStatus(status: Omit<KioskStatus, 'kioskId' | 'timestamp'>): boolean {
     if (!this.client?.connected || !this.settings) return false
-    const topic = `${this.getBaseTopic()}/status`
+    const topic = topics.status(this.slug)
     const full: KioskStatus = {
       ...status,
       kioskId: this.settings.kioskId,
@@ -270,7 +270,7 @@ class MqttService {
    */
   private publishHeartbeat(): void {
     if (!this.client?.connected || !this.settings) return
-    const topic = `${this.getBaseTopic()}/heartbeat`
+    const topic = topics.heartbeat(this.slug)
     this.client.publish(topic, JSON.stringify(buildHeartbeat(this.settings.kioskId, this.startTime)), { qos: 0 })
   }
 
@@ -280,7 +280,7 @@ class MqttService {
    */
   publishSystemHeartbeat(payload: object): void {
     if (!this.client?.connected || !this.settings) return
-    this.client.publish(`${this.getBaseTopic()}/system/heartbeat`, JSON.stringify(payload), { qos: 0, retain: true })
+    this.client.publish(topics.systemHeartbeat(this.slug), JSON.stringify(payload), { qos: 0, retain: true })
   }
 
   /**
@@ -289,7 +289,7 @@ class MqttService {
    */
   publishGracefulOffline(payload: object): void {
     if (!this.client?.connected || !this.settings) return
-    this.client.publish(`${this.getBaseTopic()}/system/heartbeat`, JSON.stringify(payload), { qos: 1, retain: true })
+    this.client.publish(topics.systemHeartbeat(this.slug), JSON.stringify(payload), { qos: 1, retain: true })
   }
 
   /**
