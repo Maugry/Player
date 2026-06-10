@@ -57,9 +57,23 @@ const COLOR_VARS: Record<keyof KioskThemeColors, string> = {
 
 const CUSTOM_STYLE_ID = 'kiosk-theme-custom'
 
-/** Expand a #RGB/#RRGGBB hex to an `rgba(r, g, b, a)` string. */
-function hexToRgba(hex: string, alpha: number): string {
-  let h = hex.replace('#', '')
+/** Non-colour CSS vars this module manages (cleared/re-set on every apply). */
+const MANAGED_VARS = [
+  '--radius',
+  '--brand-gradient',
+  '--font-sans',
+  '--kiosk-bg-image',
+  '--kiosk-bg-size',
+  '--kiosk-bg-repeat',
+  '--kiosk-bg-overlay',
+]
+
+const HEX_RE = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/
+
+/** Expand a #RGB/#RRGGBB hex to an `rgba(r, g, b, a)` string, or null if invalid. */
+function hexToRgba(hex: string, alpha: number): string | null {
+  if (!HEX_RE.test(hex)) return null
+  let h = hex.slice(1)
   if (h.length === 3) h = h.split('').map((c) => c + c).join('')
   const r = parseInt(h.slice(0, 2), 16)
   const g = parseInt(h.slice(2, 4), 16)
@@ -67,8 +81,21 @@ function hexToRgba(hex: string, alpha: number): string {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`
 }
 
+/** Resolve a media URL against the CMS server, handling absolute/protocol-relative/root-relative. */
 function resolveUrl(url: string, serverUrl: string): string {
-  return /^https?:\/\//.test(url) ? url : `${serverUrl}${url}`
+  try {
+    return new URL(url, serverUrl || undefined).href
+  } catch {
+    return url
+  }
+}
+
+/** Reset every CSS var this module manages, so a theme that omits a token
+ *  falls back to the index.css defaults instead of inheriting the previous theme. */
+function clearManagedVars(root: HTMLElement): void {
+  for (const v of Object.values(COLOR_VARS)) root.style.removeProperty(v)
+  for (const v of MANAGED_VARS) root.style.removeProperty(v)
+  root.style.removeProperty('font-family')
 }
 
 /**
@@ -78,6 +105,10 @@ function resolveUrl(url: string, serverUrl: string): string {
 export function applyTheme(theme: KioskTheme | null | undefined, serverUrl = ''): void {
   if (!theme) return
   const root = document.documentElement
+
+  // Clear previously-applied vars so re-theming (via sync) never leaves a stale
+  // token from the old theme stuck on the root.
+  clearManagedVars(root)
 
   // Appearance baseline first, so unspecified tokens fall back correctly.
   root.classList.toggle('dark', theme.appearance === 'dark')
@@ -118,7 +149,8 @@ export function applyTheme(theme: KioskTheme | null | undefined, serverUrl = '')
     root.style.setProperty('--kiosk-bg-repeat', tile ? 'repeat' : 'no-repeat')
   }
   if (theme.backgroundOverlay?.color) {
-    root.style.setProperty('--kiosk-bg-overlay', hexToRgba(theme.backgroundOverlay.color, theme.backgroundOverlay.opacity ?? 0.5))
+    const overlay = hexToRgba(theme.backgroundOverlay.color, theme.backgroundOverlay.opacity ?? 0.5)
+    if (overlay) root.style.setProperty('--kiosk-bg-overlay', overlay)
   }
 
   // Custom CSS escape hatch — single managed <style> element.

@@ -69,6 +69,41 @@ describe('applyTheme', () => {
     expect(root().style.getPropertyValue('--kiosk-bg-image')).toBe('url("https://cdn.example/bg.jpg")')
   })
 
+  it('handles a trailing slash on the server URL without doubling', () => {
+    applyTheme({ backgroundImage: { url: '/api/media/file/bg.jpg' } }, 'http://cms.local/')
+    expect(root().style.getPropertyValue('--kiosk-bg-image')).toBe('url("http://cms.local/api/media/file/bg.jpg")')
+  })
+
+  it('clears stale vars when a later theme omits them (live re-theming)', () => {
+    applyTheme({
+      colors: { primary: '#111111' },
+      radius: 1,
+      gradient: { from: '#A', to: '#B' },
+      fontFamily: "'Avenir', sans-serif",
+      backgroundImage: { url: '/api/media/file/bg.jpg' },
+      backgroundOverlay: { color: '#000000', opacity: 0.4 },
+    }, 'http://cms.local')
+    // Re-apply a minimal theme — everything the new theme omits must reset.
+    applyTheme({ appearance: 'light' })
+    expect(root().style.getPropertyValue('--primary')).toBe('')
+    expect(root().style.getPropertyValue('--radius')).toBe('')
+    expect(root().style.getPropertyValue('--brand-gradient')).toBe('')
+    expect(root().style.getPropertyValue('--font-sans')).toBe('')
+    expect(root().style.fontFamily).toBe('')
+    expect(root().style.getPropertyValue('--kiosk-bg-image')).toBe('')
+    expect(root().style.getPropertyValue('--kiosk-bg-overlay')).toBe('')
+  })
+
+  it('expands a 3-digit hex overlay', () => {
+    applyTheme({ backgroundOverlay: { color: '#f00', opacity: 0.3 } })
+    expect(root().style.getPropertyValue('--kiosk-bg-overlay')).toBe('rgba(255, 0, 0, 0.3)')
+  })
+
+  it('skips the overlay on a malformed colour instead of emitting NaN', () => {
+    applyTheme({ backgroundOverlay: { color: 'rgb(0,0,0)', opacity: 0.5 } })
+    expect(root().style.getPropertyValue('--kiosk-bg-overlay')).toBe('')
+  })
+
   it('builds an rgba overlay from colour + opacity', () => {
     applyTheme({ backgroundOverlay: { color: '#000000', opacity: 0.5 } })
     expect(root().style.getPropertyValue('--kiosk-bg-overlay')).toBe('rgba(0, 0, 0, 0.5)')
