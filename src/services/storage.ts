@@ -644,6 +644,11 @@ declare global {
       shutdown: () => Promise<void>
       reboot: () => Promise<void>
       quitApp: () => Promise<void>
+      // Software update (Epic C)
+      startUpdate: (cmd: { action: string; version: string; feedUrl: string }) => Promise<void>
+      onUpdateStatus: (
+        cb: (s: { version: string; phase: string; error?: string; progressPercent?: number }) => void
+      ) => () => void
     }
   }
 }

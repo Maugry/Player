@@ -58,6 +58,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   shutdown: () => ipcRenderer.invoke('system-shutdown'),
   reboot: () => ipcRenderer.invoke('system-reboot'),
   quitApp: () => ipcRenderer.invoke('quit-app'),
+
+  // Software update (Epic C)
+  startUpdate: (cmd: { action: string; version: string; feedUrl: string }) =>
+    ipcRenderer.invoke('start-update', cmd),
+  onUpdateStatus: (cb: (s: { version: string; phase: string; error?: string; progressPercent?: number }) => void) => {
+    const listener = (_e: unknown, s: any) => cb(s)
+    ipcRenderer.on('update-status', listener)
+    return () => ipcRenderer.off('update-status', listener)
+  },
 })
 
 // Also expose basic ipcRenderer for other uses

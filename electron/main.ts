@@ -9,6 +9,7 @@ import { createHash } from 'node:crypto'
 import log from 'electron-log/main'
 import { isDownloadComplete } from './download-validate'
 import { resolveRange, getMimeTypeFromFilePath } from './media-range'
+import { configureUpdater, startUpdate, clearUpdateLock } from './updater'
 
 log.initialize({ preload: true })
 log.transports.file.maxSize = 5 * 1024 * 1024 // 5 MB
@@ -82,6 +83,11 @@ function createWindow() {
     win.setAlwaysOnTop(true, 'screen-saver')
     win.moveTop()
   }
+
+  // Software update (Epic C) — configureUpdater MUST run before clearUpdateLock
+  // so the module-level lockPath is set when we release the lock.
+  configureUpdater(win, app.getPath('appData'))
+  clearUpdateLock() // we just (re)started — if an update brought us here, release the lock
 
   const syncWindowToPrimaryDisplay = () => {
     const display = screen.getPrimaryDisplay()
@@ -420,6 +426,9 @@ ipcMain.handle('quit-app', () => {
   log.info('[Main] App quit requested')
   app.quit()
 })
+
+// Software update (Epic C): renderer forwards the MQTT update command here.
+ipcMain.handle('start-update', (_e, cmd) => startUpdate(cmd))
 
 // Register custom protocol for serving local media files
 // Must be called before app is ready
