@@ -9,7 +9,7 @@
  */
 
 import mqtt, { MqttClient, IClientOptions } from 'mqtt'
-import { topics, parseAppCommand } from '@umka/protocol'
+import { topics, parseAppCommand, parseWirePayload } from '@umka/protocol'
 import { APP_VERSION } from '@/version'
 import type { KioskCommand, KioskStatus, KioskHeartbeat, KioskSettings } from '@/types'
 
@@ -104,6 +104,9 @@ class MqttService {
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null
   private startTime = Date.now()
   private reconnectAttempts = 0
+  // Guard: the connect handler fires again on every reconnect, but the
+  // onUpdateStatus forwarder must be registered with the main process only once.
+  private updateForwarderRegistered = false
 
   /**
    * Get this kiosk's slug for topic builders.
@@ -146,6 +149,7 @@ class MqttService {
         console.log('[MQTT] Connected')
         this.reconnectAttempts = 0
         this.subscribeToCommands()
+        this.registerUpdateForwarder()
         this.startHeartbeat()
         resolve()
       })
@@ -193,6 +197,7 @@ class MqttService {
       topics.commandsVolume(slug),
       topics.commandsLocale(slug),
       topics.commandsLoop(slug),
+      topics.commandsUpdate(slug),
     ]
 
     commandTopics.forEach(topic => {
@@ -207,6 +212,21 @@ class MqttService {
   }
 
   /**
+   * Register the main-process update-status forwarder exactly once. The main
+   * process emits each electron-updater status; we republish it on MQTT
+   * (system/update-status). The connect handler fires again on every reconnect,
+   * so guard against re-registering the same IPC listener.
+   */
+  private registerUpdateForwarder(): void {
+    if (this.updateForwarderRegistered) return
+    if (typeof window === 'undefined' || !window.electronAPI?.onUpdateStatus) return
+    this.updateForwarderRegistered = true
+    window.electronAPI.onUpdateStatus((s) => {
+      this.client?.publish(topics.systemUpdateStatus(this.slug), JSON.stringify(s), { qos: 1 })
+    })
+  }
+
+  /**
    * Handle incoming MQTT messages
    */
   private handleMessage(topic: string, payload: Buffer): void {
@@ -215,6 +235,20 @@ class MqttService {
     if (parts.length < 5 || parts[3] !== 'commands') return
     const leaf = parts[4]
     const raw = payload.toString()
+
+    // commands/update is not a player action: hand it off to the main process,
+    // where electron-updater + quitAndInstall live. Do not route it through the
+    // player command handlers.
+    if (leaf === 'update') {
+      const r = parseWirePayload('updateCommand', raw)
+      if (!r.ok) {
+        console.warn(`[MQTT] Ignored malformed update payload:`, raw)
+        return
+      }
+      window.electronAPI?.startUpdate?.(r.data)
+      return
+    }
+
     const command = parseCommand(leaf, raw)
     if (!command) {
       console.warn(`[MQTT] Ignored payload on ${leaf}:`, raw)
@@ -307,6 +341,7 @@ class MqttService {
     }
 
     this.commandHandlers.clear()
+    this.updateForwarderRegistered = false
   }
 
   /**
