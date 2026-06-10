@@ -25,7 +25,7 @@ const iconMap = {
 
 export function BrowseMenu({ items, canGoBack, onSelect, onBack, onHome }: BrowseMenuProps) {
   return (
-    <div className="min-h-screen bg-background p-8">
+    <div className="min-h-screen p-8">
       {/* Header */}
       <header className="flex items-center justify-between mb-8">
         <div className="flex items-center gap-4">

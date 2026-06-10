@@ -16,6 +16,13 @@ log.transports.file.format = '{y}-{m}-{d} {h}:{i}:{s}.{ms} [{level}] {text}'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
+// Dev-only: expose Chrome DevTools Protocol on a port for remote inspection /
+// screenshots during manual verification. Env-gated so it never ships enabled.
+if (process.env.PLAYER_DEBUG_PORT) {
+  app.commandLine.appendSwitch('remote-debugging-port', process.env.PLAYER_DEBUG_PORT)
+  app.commandLine.appendSwitch('remote-allow-origins', '*')
+}
+
 // Per-install AppData isolation: different install folders get different
 // userData dirs (no DB/cache lock contention); the same folder across updater
 // upgrades keeps its dir (continuity). Must run before MEDIA_CACHE_DIR below.

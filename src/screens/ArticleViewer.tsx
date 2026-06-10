@@ -93,7 +93,7 @@ export function ArticleViewer({ item, onBack, onHome }: ArticleViewerProps) {
   }
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen">
       {/* Header */}
       <header className="sticky top-0 bg-background/95 backdrop-blur border-b z-10">
         <div className="container mx-auto px-4 py-4 flex items-center justify-between">

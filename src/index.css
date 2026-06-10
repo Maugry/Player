@@ -134,12 +134,18 @@
 }
 
 @layer base {
+  /* The body is the themed canvas. Layered front-to-back: a darkening scrim,
+     the optional background image, then the brand gradient as the base backdrop.
+     All default to none/transparent, so an un-themed kiosk just shows the solid
+     `bg-background` colour. Content screens are transparent (no opaque
+     bg-background) so this canvas shows through. */
   body {
     background-image:
       linear-gradient(var(--kiosk-bg-overlay), var(--kiosk-bg-overlay)),
-      var(--kiosk-bg-image);
-    background-size: var(--kiosk-bg-size);
-    background-repeat: var(--kiosk-bg-repeat);
+      var(--kiosk-bg-image),
+      var(--brand-gradient);
+    background-size: var(--kiosk-bg-size), var(--kiosk-bg-size), cover;
+    background-repeat: var(--kiosk-bg-repeat), var(--kiosk-bg-repeat), no-repeat;
     background-position: center;
     background-attachment: fixed;
     font-family: var(--font-sans, inherit);

@@ -76,7 +76,7 @@ export function DetailPage({ item, onBack, onHome }: DetailPageProps) {
   const isEmpty = !hasHeroVideo && !hasHeroImage && blocks.length === 0 && legacyShowcase.length === 0
 
   return (
-    <div className="min-h-screen overflow-y-auto bg-background">
+    <div className="min-h-screen overflow-y-auto">
       {/* Header */}
       <header className="sticky top-0 z-10 flex items-center gap-4 bg-background/90 p-4 backdrop-blur">
         <Button variant="outline" size="lg" onClick={onBack}>
