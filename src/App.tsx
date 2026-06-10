@@ -17,6 +17,7 @@ import { loadSettings } from '@/services/config'
 import { mqttService } from '@/services/mqtt'
 import { supervisorService } from '@/services/supervisor'
 import { apiService } from '@/services/api'
+import { applyTheme } from '@/services/theme'
 import { playerService, type PlayerState } from '@/services/player'
 import { storageService } from '@/services/storage'
 import type { KioskSettings, ContentPackage, MenuItem, MediaItem, KioskCommand, KioskMode } from '@/types'
@@ -70,6 +71,8 @@ function App() {
     try {
       const kioskConfig = await apiService.getKioskConfig()
       console.log('[App] Kiosk config:', kioskConfig)
+      // Apply the kiosk's theme (#260). depth=2 populates theme + its media.
+      applyTheme(kioskConfig.theme, apiService.getServerUrl())
       if (kioskConfig.contentPackage) {
         const pkgId = typeof kioskConfig.contentPackage === 'string'
           ? kioskConfig.contentPackage

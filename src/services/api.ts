@@ -30,6 +30,11 @@ class ApiService {
     this.baseUrl = settings.serverUrl
   }
 
+  /** Base CMS URL, for resolving relative media URLs (e.g. theme background). */
+  getServerUrl(): string {
+    return this.settings?.serverUrl ?? ''
+  }
+
   /**
    * Make API request
    */

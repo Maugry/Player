@@ -121,3 +121,27 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* Kiosk theme (#260): runtime-set variables from services/theme.ts applyTheme().
+   Defaults are inert (no image, transparent scrim) so an un-themed kiosk is
+   unchanged; a theme's backgroundImage/overlay/font take effect when set. */
+:root {
+  --brand-gradient: none;
+  --kiosk-bg-image: none;
+  --kiosk-bg-size: cover;
+  --kiosk-bg-repeat: no-repeat;
+  --kiosk-bg-overlay: transparent;
+}
+
+@layer base {
+  body {
+    background-image:
+      linear-gradient(var(--kiosk-bg-overlay), var(--kiosk-bg-overlay)),
+      var(--kiosk-bg-image);
+    background-size: var(--kiosk-bg-size);
+    background-repeat: var(--kiosk-bg-repeat);
+    background-position: center;
+    background-attachment: fixed;
+    font-family: var(--font-sans, inherit);
+  }
+}
