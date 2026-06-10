@@ -19,7 +19,10 @@ win:
   # Demo/dev builds are unsigned. In production CI, set CSC_LINK + CSC_KEY_PASSWORD
   # in the environment and electron-builder signs automatically — no config change.
   forceCodeSigning: false
-  artifactName: ${productName}-Windows-${version}-Setup.${ext}
+  # Hyphenated literal (not ${productName}, which contains a space) so the feed
+  # manifest's path: has no spaces — avoids URL-encoding mismatches when the CMS
+  # serves the file and electron-updater fetches it.
+  artifactName: UMKA-Player-Windows-${version}-Setup.${ext}
 
 nsis:
   oneClick: true
