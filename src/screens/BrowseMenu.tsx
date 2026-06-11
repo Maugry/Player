@@ -14,6 +14,9 @@ interface BrowseMenuProps {
   onSelect: (item: MenuItem) => void
   onBack: () => void
   onHome: () => void
+  // Panel dual-display mode (optional; single-screen usage passes neither).
+  selectedId?: string
+  onClose?: () => void
 }
 
 const iconMap = {
@@ -23,7 +26,7 @@ const iconMap = {
   submenu: FolderOpen,
 }
 
-export function BrowseMenu({ items, canGoBack, onSelect, onBack, onHome }: BrowseMenuProps) {
+export function BrowseMenu({ items, canGoBack, onSelect, onBack, onHome, selectedId, onClose }: BrowseMenuProps) {
   return (
     <div className="min-h-screen p-8">
       {/* Header */}
@@ -41,7 +44,13 @@ export function BrowseMenu({ items, canGoBack, onSelect, onBack, onHome }: Brows
           </Button>
         </div>
         <h1 className="text-3xl font-bold">Выберите раздел</h1>
-        <div className="w-32" /> {/* Spacer for centering */}
+        {onClose ? (
+          <Button variant="outline" size="lg" onClick={onClose}>
+            Закрыть
+          </Button>
+        ) : (
+          <div className="w-32" /> /* Spacer for centering */
+        )}
       </header>
 
       {/* Menu Grid */}
@@ -52,7 +61,9 @@ export function BrowseMenu({ items, canGoBack, onSelect, onBack, onHome }: Brows
           return (
             <Card
               key={item.id}
-              className="cursor-pointer transition-all hover:scale-105 hover:shadow-lg active:scale-95"
+              className={`cursor-pointer transition-all hover:scale-105 hover:shadow-lg active:scale-95${
+                item.id === selectedId ? ' ring-4 ring-primary' : ''
+              }`}
               onClick={() => onSelect(item)}
             >
               {/* Thumbnail */}

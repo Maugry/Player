@@ -63,7 +63,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   startUpdate: (cmd: { action: string; version: string; feedUrl: string }) =>
     ipcRenderer.invoke('start-update', cmd),
   onUpdateStatus: (cb: (s: { version: string; phase: string; error?: string; progressPercent?: number }) => void) => {
-    const listener = (_e: unknown, s: any) => cb(s)
+    const listener = (_e: unknown, s: { version: string; phase: string; error?: string; progressPercent?: number }) => cb(s)
     ipcRenderer.on('update-status', listener)
     return () => ipcRenderer.off('update-status', listener)
   },

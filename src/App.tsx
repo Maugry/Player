@@ -20,6 +20,9 @@ import { apiService } from '@/services/api'
 import { applyTheme } from '@/services/theme'
 import { playerService, type PlayerState } from '@/services/player'
 import { storageService } from '@/services/storage'
+import { screenRole, type ScreenRole } from '@/lib/screenRole'
+import { DemonstrationApp } from '@/DemonstrationApp'
+import { usePresentationBridge } from '@/hooks/usePresentationBridge'
 import type { KioskSettings, ContentPackage, MenuItem, MediaItem, KioskCommand, KioskMode } from '@/types'
 
 // Fallback content for when CMS is completely unavailable
@@ -55,7 +58,27 @@ const FALLBACK_CONTENT: ContentPackage = {
   },
 }
 
+/**
+ * Renderer root. The window's role (from the ?role= query param) selects the
+ * tree: 'display' runs only the lightweight demonstration receiver; 'panel' and
+ * legacy null both run the full player in PanelApp. `App` itself calls no hooks
+ * before the branch, so the early return satisfies react-hooks/rules-of-hooks.
+ */
 function App() {
+  const role = screenRole()
+  if (role === 'display') {
+    return <DemonstrationApp />
+  }
+  return <PanelApp role={role} />
+}
+
+/**
+ * The full player tree, shared by the panel (role='panel') and legacy
+ * single-screen (role=null) windows. In panel mode it mirrors selection to the
+ * demonstration window and never renders content itself; legacy mode is
+ * byte-for-byte unchanged.
+ */
+function PanelApp({ role }: { role: Exclude<ScreenRole, 'display'> | null }) {
   const [settings, setSettings] = useState<KioskSettings | null>(null)
   const [playerState, setPlayerState] = useState<PlayerState | null>(null)
   const [isInitializing, setIsInitializing] = useState(true)
@@ -254,6 +277,10 @@ function App() {
     return unsubscribe
   }, [])
 
+  // Panel mode mirrors the current selection to the demonstration window. Pass
+  // null in legacy single-screen mode so the bridge sends nothing.
+  usePresentationBridge(role === 'panel' ? contentPackage : null)
+
   // Resolve media URLs for current content (use cached if available)
   useEffect(() => {
     async function resolveMediaUrl() {
@@ -383,8 +410,9 @@ function App() {
     )
   }
 
-  // Content display
-  if (playerState.appState === 'content' && playerState.currentContent) {
+  // Panel window delegates all content rendering to the demonstration screen;
+  // it stays on the grid. Legacy single-screen (role === null) is unchanged.
+  if (role !== 'panel' && playerState.appState === 'content' && playerState.currentContent) {
     // Raw MediaItem content renders the same media player regardless of mode:
     //  - Loop mode (incl. former projector/audio profiles): playlist items.
     //  - Triggered playback (trigger_play): a bare MediaItem with no
@@ -479,6 +507,24 @@ function App() {
     // Showcase items (contentType === 'showcase') and any item with
     // detailBlocks are handled by the DetailPage branch above; its legacy
     // showcaseItems fallback supersedes the old ShowcaseViewer.
+  }
+
+  // Panel: while an item is "open" on the demonstration screen, keep the grid up
+  // with the current menu so the visitor can pick another card or close. Only the
+  // panel window reaches here in 'content' state (the guard above skips its
+  // content render); legacy single-screen never hits this branch.
+  if (role === 'panel' && playerState.currentMenu) {
+    return (
+      <BrowseMenu
+        items={playerState.currentMenu}
+        canGoBack={playerState.menuStack.length > 0}
+        onSelect={handleSelectMenuItem}
+        onBack={handleBack}
+        onHome={handleHome}
+        selectedId={playerState.currentLeafId ?? undefined}
+        onClose={handleHome}
+      />
+    )
   }
 
   // Fallback to screensaver
