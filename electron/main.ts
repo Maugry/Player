@@ -136,7 +136,7 @@ function createWindow() {
     const p = resolveWindowPlan(
       screen.getAllDisplays().map(disp => ({ id: disp.id, bounds: disp.bounds })),
       screen.getPrimaryDisplay().id,
-      { mode: s.mode ?? 'browse' },
+      { mode: s.mode ?? '' },
     )
     if (!p.secondary && secondaryWin) {
       secondaryWin.close()
@@ -172,7 +172,7 @@ function createWindow() {
   const plan = resolveWindowPlan(
     screen.getAllDisplays().map(disp => ({ id: disp.id, bounds: disp.bounds })),
     screen.getPrimaryDisplay().id,
-    { mode: settings.mode ?? 'browse' },
+    { mode: settings.mode ?? '' },
   )
 
   if (VITE_DEV_SERVER_URL) {
@@ -439,6 +439,10 @@ ipcMain.handle('get-app-version', () => {
 ipcMain.handle('load-settings', async () => {
   // Resolve from the shared 3-location priority list (next-to-exe → resources →
   // userData). Same shape as before: parsed JSON on success, null otherwise.
+  // Note: the old multi-file parse-error fall-through was intentionally dropped.
+  // This now resolves the first *existing* settings file and parses it once,
+  // returning null/defaults if that parse fails, rather than falling back to
+  // lower-priority files — the safer behavior for a corrupt primary config.
   const settingsPath = resolveSettingsPath()
   if (settingsPath) {
     try {
