@@ -44,3 +44,24 @@ export function derivePlaceholder(pkg: ContentPackage | null): PlaceholderInfo {
 
   return { packageName: pkg.name, title: pkg.name }
 }
+
+import type { PlayerState } from '@/services/player'
+
+/**
+ * Map the player's current state onto what the demonstration screen shows.
+ * A selected leaf (appState 'content' + currentContent) becomes `media`;
+ * everything else is `idle` with a derived placeholder. Pure — same input,
+ * same output; no IPC or side effects here.
+ */
+export function derivePresentation(state: PlayerState, pkg: ContentPackage | null): PresentationState {
+  if (state.appState !== 'content' || state.currentContent == null) {
+    return { kind: 'idle', placeholder: derivePlaceholder(pkg) }
+  }
+  return {
+    kind: 'media',
+    content: state.currentContent,
+    playback: state.playbackState === 'playing' ? 'playing' : 'paused',
+    volume: state.volume,
+    loop: state.looping,
+  }
+}
