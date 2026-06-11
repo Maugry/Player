@@ -10,6 +10,9 @@ import log from 'electron-log/main'
 import { isDownloadComplete } from './download-validate'
 import { resolveRange, getMimeTypeFromFilePath } from './media-range'
 import { configureUpdater, startUpdate, clearUpdateLock } from './updater'
+import { resolveWindowPlan } from './displays'
+import { createSecondaryWindow } from './secondary-window'
+import { createPresentationRelay, type PresentationRelay } from './presentation-relay'
 
 log.initialize({ preload: true })
 log.transports.file.maxSize = 5 * 1024 * 1024 // 5 MB
@@ -53,6 +56,32 @@ export const RENDERER_DIST = path.join(process.env.APP_ROOT, 'dist')
 process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT, 'public') : RENDERER_DIST
 
 let win: BrowserWindow | null
+let secondaryWin: BrowserWindow | null = null
+let presentationRelay: PresentationRelay | null = null
+
+// Resolve the kiosk-settings.json path from the same 3-location priority list
+// the `load-settings` IPC handler uses. Shared so the main process can read
+// `mode` synchronously before creating windows.
+function resolveSettingsPath(): string | null {
+  const candidates = [
+    path.join(path.dirname(app.getPath('exe')), 'kiosk-settings.json'),
+    path.join(process.resourcesPath || path.dirname(app.getPath('exe')), 'kiosk-settings.json'),
+    path.join(app.getPath('userData'), 'kiosk-settings.json'),
+  ]
+  return candidates.find(p => fs.existsSync(p)) ?? null
+}
+
+// Synchronous settings read for window planning (mode). Best-effort: any error
+// yields an empty object so window creation always proceeds.
+function readKioskSettingsSync(): { mode?: string } {
+  try {
+    const p = resolveSettingsPath()
+    if (!p) return {}
+    return JSON.parse(fs.readFileSync(p, 'utf-8'))
+  } catch {
+    return {}
+  }
+}
 
 function createWindow() {
   const isDev = !!VITE_DEV_SERVER_URL
@@ -96,8 +125,34 @@ function createWindow() {
   syncWindowToPrimaryDisplay()
   screen.on('display-metrics-changed', syncWindowToPrimaryDisplay)
 
+  // Re-evaluate the dual-display plan when a monitor is added/removed. We only
+  // handle graceful teardown here: if the secondary's display disappears (or
+  // mode/display-count no longer warrants one), close the demonstration window.
+  // Dynamically *adding* a secondary mid-session also needs the panel reloaded
+  // with ?role=panel; that hot-attach path is out of scope (kiosks boot with
+  // their displays attached).
+  const reevaluateSecondary = () => {
+    const s = readKioskSettingsSync()
+    const p = resolveWindowPlan(
+      screen.getAllDisplays().map(disp => ({ id: disp.id, bounds: disp.bounds })),
+      screen.getPrimaryDisplay().id,
+      { mode: s.mode ?? 'browse' },
+    )
+    if (!p.secondary && secondaryWin) {
+      secondaryWin.close()
+      secondaryWin = null
+    }
+  }
+  screen.on('display-removed', reevaluateSecondary)
+  screen.on('display-added', reevaluateSecondary)
+
   win.on('closed', () => {
     screen.off('display-metrics-changed', syncWindowToPrimaryDisplay)
+    screen.off('display-removed', reevaluateSecondary)
+    screen.off('display-added', reevaluateSecondary)
+    presentationRelay?.dispose()
+    presentationRelay = null
+    if (secondaryWin) { secondaryWin.close(); secondaryWin = null }
     win = null
   })
 
@@ -109,11 +164,42 @@ function createWindow() {
     win.webContents.send('main-process-message', (new Date).toLocaleString())
   })
 
+  // Decide single vs dual based on attached displays + kiosk mode. When a
+  // secondary demonstration window is spawned, the panel carries ?role=panel;
+  // otherwise the panel loads exactly as before (no query param) so single-
+  // display and non-browse kiosks are byte-for-byte unchanged.
+  const settings = readKioskSettingsSync()
+  const plan = resolveWindowPlan(
+    screen.getAllDisplays().map(disp => ({ id: disp.id, bounds: disp.bounds })),
+    screen.getPrimaryDisplay().id,
+    { mode: settings.mode ?? 'browse' },
+  )
+
   if (VITE_DEV_SERVER_URL) {
-    win.loadURL(VITE_DEV_SERVER_URL)
+    win.loadURL(plan.secondary ? `${VITE_DEV_SERVER_URL}?role=panel` : VITE_DEV_SERVER_URL)
   } else {
-    // win.loadFile('dist/index.html')
-    win.loadFile(path.join(RENDERER_DIST, 'index.html'))
+    if (plan.secondary) {
+      win.loadFile(path.join(RENDERER_DIST, 'index.html'), { search: 'role=panel' })
+    } else {
+      win.loadFile(path.join(RENDERER_DIST, 'index.html'))
+    }
+  }
+
+  if (plan.secondary) {
+    presentationRelay = createPresentationRelay({
+      ipcMain,
+      getSecondary: () => secondaryWin?.webContents ?? null,
+    })
+    secondaryWin = createSecondaryWindow(plan.secondaryDisplay, {
+      isDev,
+      preloadPath: path.join(__dirname, 'preload.mjs'),
+      devServerUrl: VITE_DEV_SERVER_URL,
+      rendererDist: RENDERER_DIST,
+    })
+    secondaryWin.webContents.on('did-finish-load', () => {
+      if (secondaryWin) presentationRelay?.replayTo(secondaryWin.webContents)
+    })
+    secondaryWin.on('closed', () => { secondaryWin = null })
   }
 }
 
@@ -351,32 +437,16 @@ ipcMain.handle('get-app-version', () => {
 // Load settings from file (or return defaults)
 // Priority: 1. Next to executable (portable), 2. userData directory, 3. null (use defaults)
 ipcMain.handle('load-settings', async () => {
-  // Portable mode: check for settings next to the executable
-  const exeDir = path.dirname(app.getPath('exe'))
-  const portableSettingsPath = path.join(exeDir, 'kiosk-settings.json')
-
-  // Also check resources directory (for development/packaged app)
-  const resourcesSettingsPath = path.join(process.resourcesPath || exeDir, 'kiosk-settings.json')
-
-  // User data directory (traditional location)
-  const userDataSettingsPath = path.join(app.getPath('userData'), 'kiosk-settings.json')
-
-  // Try each location in order
-  const settingsPaths = [
-    portableSettingsPath,
-    resourcesSettingsPath,
-    userDataSettingsPath,
-  ]
-
-  for (const settingsPath of settingsPaths) {
-    if (fs.existsSync(settingsPath)) {
-      try {
-        log.info('[Main] Loading settings from:', settingsPath)
-        const data = fs.readFileSync(settingsPath, 'utf-8')
-        return JSON.parse(data)
-      } catch (err) {
-        log.error('[Main] Failed to load settings from', settingsPath, err)
-      }
+  // Resolve from the shared 3-location priority list (next-to-exe → resources →
+  // userData). Same shape as before: parsed JSON on success, null otherwise.
+  const settingsPath = resolveSettingsPath()
+  if (settingsPath) {
+    try {
+      log.info('[Main] Loading settings from:', settingsPath)
+      const data = fs.readFileSync(settingsPath, 'utf-8')
+      return JSON.parse(data)
+    } catch (err) {
+      log.error('[Main] Failed to load settings from', settingsPath, err)
     }
   }
 
