@@ -41,6 +41,12 @@ export async function loadSettings(): Promise<KioskSettings> {
       const fileSettings = await window.electronAPI.loadSettings()
       if (fileSettings) {
         const merged: KioskSettings = { ...defaultSettings, ...fileSettings }
+        // Derive kioskId from the slug when the settings file specifies a slug but
+        // no explicit kioskId — otherwise it silently keeps the dev default
+        // 'kiosk-dev', so heartbeat/status identity won't match the kiosk's topic.
+        if (fileSettings.kioskSlug && !fileSettings.kioskId) {
+          merged.kioskId = fileSettings.kioskSlug
+        }
         cachedSettings = merged
         return merged
       }
