@@ -103,3 +103,25 @@ describe('derivePresentation', () => {
     expect(p.kind === 'media' && p.playback).toBe('paused')
   })
 })
+
+import { applyPresentation } from './presentation'
+
+describe('applyPresentation', () => {
+  it('passes through a valid media payload', () => {
+    const payload = { kind: 'media', content: { id: 'x' }, playback: 'playing', volume: 70, loop: true }
+    expect(applyPresentation(payload).kind).toBe('media')
+  })
+
+  it('passes through a valid idle payload', () => {
+    const payload = { kind: 'idle', placeholder: { packageName: 'P' } }
+    const r = applyPresentation(payload)
+    expect(r.kind).toBe('idle')
+    expect(r.kind === 'idle' && r.placeholder.packageName).toBe('P')
+  })
+
+  it('fails safe to idle for a malformed payload', () => {
+    expect(applyPresentation(null).kind).toBe('idle')
+    expect(applyPresentation({ kind: 'banana' }).kind).toBe('idle')
+    expect(applyPresentation({ kind: 'media' }).kind).toBe('idle') // missing content
+  })
+})

@@ -65,3 +65,37 @@ export function derivePresentation(state: PlayerState, pkg: ContentPackage | nul
     loop: state.looping,
   }
 }
+
+const IDLE_FALLBACK: PresentationState = { kind: 'idle', placeholder: { packageName: '' } }
+
+/**
+ * Validate an IPC payload into a PresentationState. The demonstration screen
+ * is public-facing, so any malformed/unknown payload fails safe to idle —
+ * never a blank or error screen.
+ */
+export function applyPresentation(payload: unknown): PresentationState {
+  if (!payload || typeof payload !== 'object') return IDLE_FALLBACK
+  const p = payload as Record<string, unknown>
+  if (p.kind === 'media' && p.content && typeof p.content === 'object') {
+    return {
+      kind: 'media',
+      content: p.content as import('@/types').MenuItem | import('@/types').MediaItem,
+      playback: p.playback === 'playing' ? 'playing' : 'paused',
+      volume: typeof p.volume === 'number' ? p.volume : 80,
+      loop: !!p.loop,
+    }
+  }
+  if (p.kind === 'idle' && p.placeholder && typeof p.placeholder === 'object') {
+    const ph = p.placeholder as Record<string, unknown>
+    return {
+      kind: 'idle',
+      placeholder: {
+        packageName: typeof ph.packageName === 'string' ? ph.packageName : '',
+        media: ph.media as PlaceholderInfo['media'],
+        title: typeof ph.title === 'string' ? ph.title : undefined,
+        subtitle: typeof ph.subtitle === 'string' ? ph.subtitle : undefined,
+      },
+    }
+  }
+  return IDLE_FALLBACK
+}
