@@ -69,15 +69,39 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 })
 
+// Track the wrapper closures registered by on() so off() can remove the exact
+// wrapper that was registered with Electron's ipcRenderer (EventEmitter matches
+// listeners by reference). Keyed by the original listener, then by channel, so
+// the same listener used on multiple channels is handled correctly.
+type IpcListener = Parameters<typeof ipcRenderer.on>[1]
+type IpcWrapper = (event: Parameters<IpcListener>[0], ...args: unknown[]) => void
+const ipcWrappers = new WeakMap<IpcListener, Map<string, IpcWrapper>>()
+
 // Also expose basic ipcRenderer for other uses
 contextBridge.exposeInMainWorld('ipcRenderer', {
   on(...args: Parameters<typeof ipcRenderer.on>) {
     const [channel, listener] = args
-    return ipcRenderer.on(channel, (event, ...args) => listener(event, ...args))
+    const wrapper: IpcWrapper = (event, ...rest) => listener(event, ...rest)
+    let byChannel = ipcWrappers.get(listener)
+    if (!byChannel) {
+      byChannel = new Map<string, IpcWrapper>()
+      ipcWrappers.set(listener, byChannel)
+    }
+    byChannel.set(channel, wrapper)
+    return ipcRenderer.on(channel, wrapper)
   },
   off(...args: Parameters<typeof ipcRenderer.off>) {
-    const [channel, ...omit] = args
-    return ipcRenderer.off(channel, ...omit)
+    const [channel, listener] = args
+    const byChannel = ipcWrappers.get(listener)
+    const wrapper = byChannel?.get(channel)
+    if (wrapper) {
+      byChannel?.delete(channel)
+      if (byChannel?.size === 0) {
+        ipcWrappers.delete(listener)
+      }
+      ipcRenderer.off(channel, wrapper)
+    }
+    return ipcRenderer
   },
   send(...args: Parameters<typeof ipcRenderer.send>) {
     const [channel, ...omit] = args
