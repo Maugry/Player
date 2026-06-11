@@ -18,16 +18,28 @@ interface SecondaryWindowOpts {
 /**
  * Create the demonstration ("display") window on a given physical display.
  * Loads the SAME renderer bundle with ?role=display so it renders
- * DemonstrationApp. Kiosk/fullscreen on its own monitor in prod; framed in dev.
+ * DemonstrationApp. Framed in dev; frameless + fullscreen on its own monitor in
+ * prod.
+ *
+ * IMPORTANT (Windows multi-monitor): Electron has no way to construct a window
+ * fullscreen on a *specific* non-primary display — passing `fullscreen: true`
+ * at construction tends to fullscreen on the PRIMARY monitor regardless of
+ * x/y, landing the window on the wrong screen or showing black on the intended
+ * one (electron/electron #30249, #12664). The reliable pattern is to position
+ * the window on the target display FIRST, then call setFullScreen(true). We
+ * also keep the window hidden until `ready-to-show` to avoid a black flash on
+ * the public display, then position → fullscreen → show in that order. See
+ * docs/research/2026-06-10-electron-dual-screen-kiosk.md.
  */
 export function createSecondaryWindow(display: DisplayLike, opts: SecondaryWindowOpts): BrowserWindow {
   const win = new BrowserWindow({
+    // Construct at the target display's coordinates but NOT fullscreen — the
+    // fullscreen toggle happens after positioning (see note above).
     x: display.bounds.x,
     y: display.bounds.y,
     width: display.bounds.width,
     height: display.bounds.height,
-    kiosk: !opts.isDev,
-    fullscreen: !opts.isDev,
+    show: false,                 // reveal on ready-to-show to avoid a black flash
     frame: opts.isDev,
     alwaysOnTop: !opts.isDev,
     autoHideMenuBar: true,
@@ -46,14 +58,22 @@ export function createSecondaryWindow(display: DisplayLike, opts: SecondaryWindo
     },
   })
 
+  win.once('ready-to-show', () => {
+    if (!opts.isDev) {
+      // Position on the target display, THEN fullscreen — order matters on
+      // Windows multi-monitor (see note above).
+      win.setBounds(display.bounds)
+      win.setFullScreen(true)
+      win.setAlwaysOnTop(true, 'screen-saver')
+    }
+    win.show()
+  })
+
   if (opts.devServerUrl) {
     void win.loadURL(`${opts.devServerUrl}?role=display`)
   } else {
     void win.loadFile(path.join(opts.rendererDist, 'index.html'), { search: 'role=display' })
   }
 
-  if (!opts.isDev) {
-    win.setAlwaysOnTop(true, 'screen-saver')
-  }
   return win
 }
